@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
-import { Plus, Package, ArrowRight, Clock, CheckCircle, XCircle } from 'lucide-react';
+import { Plus, Package, ArrowRight, Clock, CheckCircle, XCircle, Trash2 } from 'lucide-react';
 import { useAuth, useToast } from '../context/AppContext.jsx';
-import { getUserListings, getMyRequests, getIncomingRequests, updateRequestStatus } from '../services/api.js';
+import { deleteListing, getUserListings, getMyRequests, getIncomingRequests, updateRequestStatus } from '../services/api.js';
 
 const TABS = ['Overview', 'My Listings', 'Requests Sent', 'Requests Received'];
 
@@ -30,6 +30,7 @@ export default function DashboardPage() {
   const [outgoing, setOutgoing] = useState([]);
   const [incoming, setIncoming] = useState([]);
   const [updatingRequest, setUpdatingRequest] = useState(null);
+  const [deletingListing, setDeletingListing] = useState(null);
 
   useEffect(() => {
     if (!isLoggedIn) { navigate('/login'); return; }
@@ -54,6 +55,20 @@ export default function DashboardPage() {
       addToast(error.message || 'Unable to update request.', 'error');
     } finally {
       setUpdatingRequest(null);
+    }
+  }
+
+  async function removeListing(listing) {
+    if (!window.confirm(`Delete "${listing.title}"? It will no longer appear in the marketplace.`)) return;
+    setDeletingListing(listing.id);
+    try {
+      await deleteListing(listing.id);
+      setListings((current) => current.filter((item) => item.id !== listing.id));
+      addToast('Listing deleted.', 'success');
+    } catch (error) {
+      addToast(error.message || 'Unable to delete listing.', 'error');
+    } finally {
+      setDeletingListing(null);
     }
   }
 
@@ -158,6 +173,16 @@ export default function DashboardPage() {
                     <span className={`listing-type-badge listing-type-badge--${l.type}`}>
                       {l.type === 'sale' ? `₹${l.price}` : l.type === 'borrow' ? 'Borrow' : 'Free'}
                     </span>
+                    <button
+                      type="button"
+                      className="btn btn--ghost btn--sm dashboard-listing-row__delete"
+                      onClick={() => removeListing(l)}
+                      disabled={deletingListing === l.id}
+                      aria-label={`Delete ${l.title}`}
+                    >
+                      <Trash2 size={15} />
+                      {deletingListing === l.id ? 'Deleting…' : 'Delete'}
+                    </button>
                   </div>
                 ))}
               </div>

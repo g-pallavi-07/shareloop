@@ -1234,6 +1234,8 @@ ul { list-style: none; }
 .dashboard-listing-row__title:hover { color: var(--teal); }
 .dashboard-listing-row__meta { font-size: 0.73rem; color: var(--text-muted); }
 .dashboard-listing-row__stats { display: flex; gap: 12px; font-size: 0.73rem; color: var(--text-muted); }
+.dashboard-listing-row__delete { color: #a33b32; }
+.dashboard-listing-row__delete:disabled { opacity: 0.55; cursor: wait; }
 
 .listing-type-badge { padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.72rem; font-weight: 700; color: #fff; }
 .listing-type-badge--sale { background: var(--teal); }
