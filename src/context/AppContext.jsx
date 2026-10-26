@@ -1,37 +1,56 @@
-import { createContext, useContext, useState, useCallback } from 'react';
+import { createContext, useContext, useState, useCallback, useEffect } from 'react';
+import { addFavorite, getCurrentUser, getFavorites, logout as logoutApi, removeFavorite } from '../services/api.js';
 
 // ── Favorites ──────────────────────────────────────────────────────────────
 
-const FAVORITES_KEY = 'shareloop_favorites';
-
-function loadFavorites() {
-  try {
-    return new Set(JSON.parse(localStorage.getItem(FAVORITES_KEY) || '[]'));
-  } catch {
-    return new Set();
-  }
-}
-
-function saveFavorites(set) {
-  localStorage.setItem(FAVORITES_KEY, JSON.stringify([...set]));
-}
-
 const FavoritesContext = createContext(null);
+const EMPTY_FAVORITES = new Set();
 
 export function FavoritesProvider({ children }) {
-  const [favorites, setFavorites] = useState(loadFavorites);
+  const { user, isLoggedIn } = useAuth();
+  const [savedFavorites, setSavedFavorites] = useState({ userId: null, ids: EMPTY_FAVORITES });
+  const userId = user ? String(user.id) : null;
+  const favorites = isLoggedIn && savedFavorites.userId === userId ? savedFavorites.ids : EMPTY_FAVORITES;
 
-  const toggle = useCallback((id) => {
-    setFavorites((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      saveFavorites(next);
-      return next;
+  useEffect(() => {
+    if (!isLoggedIn || !userId) return;
+    let active = true;
+    getFavorites()
+      .then((items) => {
+        if (active) setSavedFavorites({ userId, ids: new Set(items.map((item) => String(item.id))) });
+      })
+      .catch((error) => window.dispatchEvent(new CustomEvent('shareloop:error', { detail: error.message })));
+    return () => { active = false; };
+  }, [isLoggedIn, userId]);
+
+  const toggle = useCallback(async (id) => {
+    if (!isLoggedIn) {
+      window.dispatchEvent(new CustomEvent('shareloop:error', { detail: 'Log in to save favorites.' }));
+      return;
+    }
+    const key = String(id);
+    const wasFavorite = favorites.has(key);
+    setSavedFavorites((previous) => {
+      const next = new Set(previous.userId === userId ? previous.ids : []);
+      if (wasFavorite) next.delete(key);
+      else next.add(key);
+      return { userId, ids: next };
     });
-  }, []);
+    try {
+      if (wasFavorite) await removeFavorite(id);
+      else await addFavorite(id);
+    } catch (error) {
+      setSavedFavorites((previous) => {
+        const next = new Set(previous.userId === userId ? previous.ids : []);
+        if (wasFavorite) next.add(key);
+        else next.delete(key);
+        return { userId, ids: next };
+      });
+      window.dispatchEvent(new CustomEvent('shareloop:error', { detail: error.message }));
+    }
+  }, [favorites, isLoggedIn, userId]);
 
-  const isFavorite = useCallback((id) => favorites.has(id), [favorites]);
+  const isFavorite = useCallback((id) => favorites.has(String(id)), [favorites]);
 
   return (
     <FavoritesContext.Provider value={{ favorites, toggle, isFavorite, count: favorites.size }}>
@@ -44,13 +63,13 @@ export function useFavorites() {
   return useContext(FavoritesContext);
 }
 
-// ── Auth (mock) ────────────────────────────────────────────────────────────
+// ── Auth ────────────────────────────────────────────────────────────────────
 
-const AUTH_KEY = 'shareloop_auth';
+const AUTH_KEY = 'shareloop_user';
 
 function loadAuth() {
   try {
-    return JSON.parse(localStorage.getItem(AUTH_KEY) || 'null');
+    return JSON.parse(sessionStorage.getItem(AUTH_KEY) || 'null');
   } catch {
     return null;
   }
@@ -61,15 +80,45 @@ const AuthContext = createContext(null);
 export function AuthProvider({ children }) {
   const [auth, setAuth] = useState(loadAuth);
 
-  const login = useCallback((user, token) => {
-    const data = { user, token };
-    localStorage.setItem(AUTH_KEY, JSON.stringify(data));
+  useEffect(() => {
+    const storedAuth = loadAuth();
+    if (!storedAuth) return;
+    getCurrentUser()
+      .then((user) => {
+        const data = { user };
+        sessionStorage.setItem(AUTH_KEY, JSON.stringify(data));
+        setAuth(data);
+      })
+      .catch(() => {
+        sessionStorage.removeItem(AUTH_KEY);
+        setAuth(null);
+      });
+  }, []);
+
+  useEffect(() => {
+    const clearExpiredSession = () => {
+      sessionStorage.removeItem(AUTH_KEY);
+      setAuth(null);
+    };
+    window.addEventListener('shareloop:unauthorized', clearExpiredSession);
+    return () => window.removeEventListener('shareloop:unauthorized', clearExpiredSession);
+  }, []);
+
+  const login = useCallback((user) => {
+    const data = { user };
+    sessionStorage.setItem(AUTH_KEY, JSON.stringify(data));
     setAuth(data);
   }, []);
 
-  const logout = useCallback(() => {
-    localStorage.removeItem(AUTH_KEY);
-    setAuth(null);
+  const logout = useCallback(async () => {
+    try {
+      await logoutApi();
+    } catch (error) {
+      window.dispatchEvent(new CustomEvent('shareloop:error', { detail: error.message }));
+    } finally {
+      sessionStorage.removeItem(AUTH_KEY);
+      setAuth(null);
+    }
   }, []);
 
   return (
@@ -95,6 +144,12 @@ export function ToastProvider({ children }) {
     setToasts((prev) => [...prev, { id, message, type }]);
     setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), 4000);
   }, []);
+
+  useEffect(() => {
+    const showError = (event) => addToast(event.detail || 'The request failed.', 'error');
+    window.addEventListener('shareloop:error', showError);
+    return () => window.removeEventListener('shareloop:error', showError);
+  }, [addToast]);
 
   return (
     <ToastContext.Provider value={{ addToast }}>

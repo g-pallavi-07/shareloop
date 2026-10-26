@@ -4,6 +4,8 @@ import { Heart, ArrowLeft, ArrowRight, ShieldCheck } from 'lucide-react';
 import { getListingById, createRequest } from '../services/api.js';
 import { useFavorites, useToast } from '../context/AppContext.jsx';
 
+const MIN_RETURN_DATE = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
 function TypeBadge({ type }) {
   const map = { sale: 'For Sale', borrow: 'To Borrow', free: 'Free' };
   const cls = { sale: 'badge--sale', borrow: 'badge--borrow', free: 'badge--free' };
@@ -23,24 +25,25 @@ export default function ListingDetailPage() {
   const [requesting, setRequesting] = useState(false);
   const [requested, setRequested] = useState(false);
   const [message, setMessage] = useState('');
+  const [expectedReturnDate, setExpectedReturnDate] = useState('');
   const [showDialog, setShowDialog] = useState(false);
 
   useEffect(() => {
     setLoading(true);
     getListingById(id)
       .then((l) => { setListing(l); setLoading(false); })
-      .catch(() => { setError('Listing not found.'); setLoading(false); });
+      .catch((err) => { setError(err.message || 'Unable to load listing details.'); setLoading(false); });
   }, [id]);
 
   async function handleRequest() {
     setRequesting(true);
     try {
-      await createRequest(id, message);
+      await createRequest(id, message, expectedReturnDate);
       setRequested(true);
       setShowDialog(false);
       addToast('Request sent! The seller will get back to you.', 'success');
-    } catch {
-      addToast('Failed to send request. Please try again.', 'error');
+    } catch (err) {
+      addToast(err.message || 'Failed to send request. Please try again.', 'error');
     } finally {
       setRequesting(false);
     }
@@ -169,12 +172,25 @@ export default function ListingDetailPage() {
               value={message}
               onChange={(e) => setMessage(e.target.value)}
             />
+            {listing.type === 'borrow' && (
+              <label className="form-group">
+                <span className="form-label">Expected return date</span>
+                <input
+                  type="date"
+                  className="form-input"
+                  min={MIN_RETURN_DATE}
+                  value={expectedReturnDate}
+                  onChange={(e) => setExpectedReturnDate(e.target.value)}
+                  required
+                />
+              </label>
+            )}
             <div className="dialog__actions">
               <button className="btn btn--ghost" onClick={() => setShowDialog(false)}>Cancel</button>
               <button
                 className="btn btn--dark"
                 onClick={handleRequest}
-                disabled={requesting}
+                disabled={requesting || (listing.type === 'borrow' && !expectedReturnDate)}
               >
                 {requesting ? 'Sending…' : 'Send Request'}
               </button>

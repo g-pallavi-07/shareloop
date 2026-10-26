@@ -2,8 +2,8 @@ import { useState, useEffect } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { SlidersHorizontal, X } from 'lucide-react';
 import ListingCard from '../components/ListingCard.jsx';
-import { getListings } from '../services/api.js';
-import { CATEGORIES, LISTING_TYPES, CONDITIONS } from '../data/mockData.js';
+import { getCategories, getListings } from '../services/api.js';
+import { LISTING_TYPES, CONDITIONS } from '../data/catalog.js';
 
 const SORT_OPTIONS = [
   { value: 'newest', label: 'Newest first' },
@@ -16,7 +16,15 @@ export default function MarketplacePage() {
   const [listings, setListings] = useState([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
+  const [categories, setCategories] = useState([{ id: 'all', name: 'All categories' }]);
   const [filtersOpen, setFiltersOpen] = useState(false);
+
+  useEffect(() => {
+    getCategories()
+      .then((items) => setCategories([{ id: 'all', name: 'All categories' }, ...items]))
+      .catch((error) => window.dispatchEvent(new CustomEvent('shareloop:error', { detail: error.message })));
+  }, []);
 
   // Filter state — driven by URL
   const [query, setQuery] = useState(searchParams.get('q') || '');
@@ -25,20 +33,27 @@ export default function MarketplacePage() {
   const [sort, setSort] = useState(searchParams.get('sort') || 'newest');
   const [condition, setCondition] = useState(searchParams.get('condition') || '');
   const [maxPrice, setMaxPrice] = useState(searchParams.get('maxPrice') || '');
+  const requestedPage = Number(searchParams.get('page') || 1);
+  const page = Number.isInteger(requestedPage) && requestedPage > 0 ? requestedPage : 1;
 
   useEffect(() => {
     setLoading(true);
-    getListings({ query, category, type, sort, condition, maxPrice: maxPrice ? Number(maxPrice) : undefined }).then(
+    setLoadError('');
+    getListings({ query, category, type, sort, condition, maxPrice: maxPrice ? Number(maxPrice) : undefined, page }).then(
       ({ listings: l, total: t }) => {
         setListings(l);
         setTotal(t);
         setLoading(false);
       }
-    );
-  }, [query, category, type, sort, condition, maxPrice]);
+    ).catch((error) => {
+      setLoadError(error.message || 'Unable to load listings.');
+      setLoading(false);
+    });
+  }, [query, category, type, sort, condition, maxPrice, page]);
 
   function applyFilter(key, value) {
     const p = new URLSearchParams(searchParams);
+    p.delete('page');
     if (value && value !== 'all' && value !== '') p.set(key, value);
     else p.delete(key);
     setSearchParams(p, { replace: true });
@@ -52,6 +67,12 @@ export default function MarketplacePage() {
     setCondition('');
     setMaxPrice('');
     setSearchParams({});
+  }
+
+  function goToPage(nextPage) {
+    const params = new URLSearchParams(searchParams);
+    params.set('page', String(nextPage));
+    setSearchParams(params);
   }
 
   const hasActiveFilters = query || category !== 'all' || type !== 'all' || condition || maxPrice;
@@ -74,7 +95,7 @@ export default function MarketplacePage() {
               value={category}
               onChange={(e) => { setCategory(e.target.value); applyFilter('category', e.target.value); }}
             >
-              {CATEGORIES.map((c) => <option key={c.id} value={c.id}>{c.label}</option>)}
+              {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
             </select>
             <select
               className="marketplace-page__select"
@@ -141,8 +162,8 @@ export default function MarketplacePage() {
         ) : listings.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state__icon">🔍</div>
-            <h3 className="empty-state__heading">No listings found</h3>
-            <p className="empty-state__body">Try different filters or search terms.</p>
+            <h3 className="empty-state__heading">{loadError || 'No listings found'}</h3>
+            <p className="empty-state__body">{loadError ? 'Check that the ShareLoop backend and database are running.' : 'Try different filters or search terms.'}</p>
             <button className="btn btn--dark" onClick={clearFilters}>Clear filters</button>
           </div>
         ) : (
@@ -151,6 +172,17 @@ export default function MarketplacePage() {
               <ListingCard key={l.id} listing={l} delay={i * 60} />
             ))}
           </div>
+        )}
+        {!loading && listings.length > 0 && Math.ceil(total / 24) > 1 && (
+          <nav className="marketplace-pagination" aria-label="Listing pages">
+            <button className="btn btn--outline-sm" onClick={() => goToPage(page - 1)} disabled={page <= 1}>
+              Previous
+            </button>
+            <span>Page {page} of {Math.ceil(total / 24)}</span>
+            <button className="btn btn--outline-sm" onClick={() => goToPage(page + 1)} disabled={page >= Math.ceil(total / 24)}>
+              Next
+            </button>
+          </nav>
         )}
       </div>
     </div>

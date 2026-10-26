@@ -1,6 +1,6 @@
 /* ────────────────────────────────────────────────────────────────────────────
    SHARELOOP — Design System
-   Brand: "semistore" aesthetic from Stitch reference
+   Brand: ShareLoop campus marketplace
    Colors:  cream bg, deep forest green, muted olive, dusty rose/peach accents
    Typography: serif headings (Georgia / Playfair), sans body
    ──────────────────────────────────────────────────────────────────────────── */
@@ -883,6 +883,9 @@ ul { list-style: none; }
   outline: none;
 }
 .marketplace-page__results-row { display: flex; justify-content: space-between; align-items: center; }
+.marketplace-pagination { display: flex; justify-content: center; align-items: center; gap: 18px; padding: 32px 0; }
+.marketplace-pagination > span { color: var(--text-secondary); font-size: 14px; }
+.marketplace-pagination button:disabled { opacity: 0.45; cursor: not-allowed; }
 .marketplace-page__count { font-size: 0.8rem; color: var(--text-muted); }
 
 /* ── Detail Page ─────────────────────────────────────────────────────────── */
@@ -1231,6 +1234,8 @@ ul { list-style: none; }
 .dashboard-listing-row__title:hover { color: var(--teal); }
 .dashboard-listing-row__meta { font-size: 0.73rem; color: var(--text-muted); }
 .dashboard-listing-row__stats { display: flex; gap: 12px; font-size: 0.73rem; color: var(--text-muted); }
+.dashboard-listing-row__delete { color: #a33b32; }
+.dashboard-listing-row__delete:disabled { opacity: 0.55; cursor: wait; }
 
 .listing-type-badge { padding: 4px 10px; border-radius: var(--radius-sm); font-size: 0.72rem; font-weight: 700; color: #fff; }
 .listing-type-badge--sale { background: var(--teal); }

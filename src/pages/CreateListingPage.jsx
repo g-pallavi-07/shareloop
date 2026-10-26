@@ -1,30 +1,15 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ImagePlus, X } from 'lucide-react';
-import { createListing } from '../services/api.js';
+import { createListing, getCategories, uploadImage } from '../services/api.js';
 import { useToast, useAuth } from '../context/AppContext.jsx';
 
-const CATEGORIES = [
-  'Textbooks', 'Tech & Gadgets', 'Academic Essentials', 'Lab Equipment',
-  'Stationery', 'Hostel Essentials', 'Sports & Fitness', 'Cycles & Transport',
-  'Electronics', 'Furniture', 'Clothing', 'Other',
-];
-
 const CONDITIONS = ['Like New', 'Good', 'Fair', 'Well Used'];
-
-const CATEGORY_IDS = {
-  'Textbooks': 'textbooks', 'Tech & Gadgets': 'tech-gadgets',
-  'Academic Essentials': 'academic-essentials', 'Lab Equipment': 'lab-equipment',
-  'Stationery': 'stationery', 'Hostel Essentials': 'hostel-essentials',
-  'Sports & Fitness': 'sports', 'Cycles & Transport': 'cycles',
-  'Electronics': 'electronics', 'Furniture': 'furniture',
-  'Clothing': 'clothing', 'Other': 'other',
-};
 
 export default function CreateListingPage() {
   const navigate = useNavigate();
   const { addToast } = useToast();
-  const { user, isLoggedIn } = useAuth();
+  const { isLoggedIn } = useAuth();
 
   const [form, setForm] = useState({
     title: '', type: 'sale', category: '', condition: '',
@@ -33,6 +18,14 @@ export default function CreateListingPage() {
   const [errors, setErrors] = useState({});
   const [loading, setLoading] = useState(false);
   const [previewUrls, setPreviewUrls] = useState([]);
+  const [imageFiles, setImageFiles] = useState([]);
+  const [categories, setCategories] = useState([]);
+
+  useEffect(() => {
+    getCategories()
+      .then(setCategories)
+      .catch((error) => addToast(error.message || 'Unable to load categories.', 'error'));
+  }, [addToast]);
 
   if (!isLoggedIn) {
     navigate('/login');
@@ -63,25 +56,21 @@ export default function CreateListingPage() {
     if (Object.keys(errs).length) { setErrors(errs); return; }
     setLoading(true);
     try {
-      const categoryLabel = form.category;
-      const category = CATEGORY_IDS[form.category] ?? 'other';
+      const categoryLabel = categories.find((item) => item.id === form.category)?.name ?? '';
       const conditionLabel = form.condition;
       const condition = form.condition.toLowerCase().replace(/ /g, '-');
-      const seller = { id: user?.id ?? 'u0', name: user?.name ?? 'You', department: user?.department ?? '', year: user?.year ?? '' };
-      const images = previewUrls.length
-        ? previewUrls
-        : ['https://images.unsplash.com/photo-1531346878377-a5be20888e57?w=600&auto=format&fit=crop'];
+      const images = await Promise.all(imageFiles.map(uploadImage));
       const newListing = await createListing({
         ...form,
-        category, categoryLabel, condition, conditionLabel,
+        categoryLabel, condition, conditionLabel,
         price: form.type === 'sale' ? Number(form.price) : null,
         borrowDuration: form.type === 'borrow' ? form.borrowDuration : undefined,
-        images, seller, tags: [form.title.toLowerCase()],
+        images,
       });
       addToast('Listing created!', 'success');
       navigate(`/listing/${newListing.id}`);
-    } catch {
-      addToast('Failed to create listing. Please try again.', 'error');
+    } catch (err) {
+      addToast(err.message || 'Failed to create listing. Please try again.', 'error');
     } finally {
       setLoading(false);
     }
@@ -89,11 +78,21 @@ export default function CreateListingPage() {
 
   function handleImages(e) {
     const files = Array.from(e.target.files);
-    files.slice(0, 4).forEach((f) => {
+    const validFiles = files.filter((file) => {
+      const validType = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'].includes(file.type);
+      if (!validType || file.size > 5 * 1024 * 1024) {
+        addToast('Choose JPEG, PNG, GIF, or WebP photos under 5 MB.', 'error');
+        return false;
+      }
+      return true;
+    }).slice(0, Math.max(0, 4 - imageFiles.length));
+    setImageFiles((previous) => [...previous, ...validFiles]);
+    validFiles.forEach((f) => {
       const reader = new FileReader();
       reader.onload = (ev) => setPreviewUrls((prev) => [...prev, ev.target.result]);
       reader.readAsDataURL(f);
     });
+    e.target.value = '';
   }
 
   return (
@@ -138,7 +137,7 @@ export default function CreateListingPage() {
                 <select id="category" className={`form-input form-select ${errors.category ? 'form-input--error' : ''}`}
                   value={form.category} onChange={set('category')}>
                   <option value="">Select category</option>
-                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
                 </select>
                 {errors.category && <span className="form-error">{errors.category}</span>}
               </div>
@@ -186,7 +185,7 @@ export default function CreateListingPage() {
             <label className="image-upload-zone">
               <ImagePlus size={28} />
               <span>Click to upload photos (up to 4)</span>
-              <input type="file" accept="image/*" multiple onChange={handleImages} className="image-upload-zone__input" />
+              <input type="file" accept="image/jpeg,image/png,image/gif,image/webp" multiple onChange={handleImages} className="image-upload-zone__input" />
             </label>
             {previewUrls.length > 0 && (
               <div className="image-preview-row">
@@ -194,7 +193,10 @@ export default function CreateListingPage() {
                   <div key={i} className="image-preview">
                     <img src={url} alt={`Preview ${i + 1}`} />
                     <button type="button" className="image-preview__remove"
-                      onClick={() => setPreviewUrls((p) => p.filter((_, j) => j !== i))}>
+                      onClick={() => {
+                        setPreviewUrls((p) => p.filter((_, j) => j !== i));
+                        setImageFiles((p) => p.filter((_, j) => j !== i));
+                      }}>
                       <X size={14} />
                     </button>
                   </div>

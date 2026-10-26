@@ -25,7 +25,7 @@ export default function Header() {
     <header className="header">
       <div className="header__inner container">
         <Link to="/" className="header__logo">
-          <span className="logo-text">semi<em>store</em>.</span>
+          <span className="logo-text">share<em>loop</em>.</span>
         </Link>
 
         <nav className={`header__nav ${menuOpen ? 'header__nav--open' : ''}`} aria-label="Main navigation">

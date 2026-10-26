@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Heart } from 'lucide-react';
 import { useFavorites } from '../context/AppContext.jsx';
-import { getListings } from '../services/api.js';
+import { getFavorites } from '../services/api.js';
 import ListingCard from '../components/ListingCard.jsx';
 
 export default function FavoritesPage() {
@@ -12,10 +12,10 @@ export default function FavoritesPage() {
   const navigate = useNavigate();
 
   useEffect(() => {
-    getListings({}).then(({ listings: all }) => {
-      setListings(all.filter((l) => favorites.has(l.id)));
-      setLoading(false);
-    });
+    getFavorites()
+      .then(setListings)
+      .catch((error) => window.dispatchEvent(new CustomEvent('shareloop:error', { detail: error.message })))
+      .finally(() => setLoading(false));
   }, [favorites]);
 
   return (
@@ -25,14 +25,14 @@ export default function FavoritesPage() {
           <h1 className="favorites-page__heading">
             <Heart size={24} className="favorites-page__icon" /> Saved Finds
           </h1>
-          <p className="favorites-page__sub">{favorites.size} item{favorites.size !== 1 ? 's' : ''} saved</p>
+          <p className="favorites-page__sub">{listings.length} item{listings.length !== 1 ? 's' : ''} saved</p>
         </div>
 
         {loading ? (
           <div className="listing-grid listing-grid--skeleton">
             {[1, 2, 3].map((n) => <div key={n} className="listing-card listing-card--skeleton" />)}
           </div>
-        ) : favorites.size === 0 ? (
+        ) : listings.length === 0 ? (
           <div className="empty-state">
             <div className="empty-state__icon">💛</div>
             <h3 className="empty-state__heading">No saved finds yet</h3>

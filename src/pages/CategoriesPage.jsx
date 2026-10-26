@@ -96,15 +96,16 @@ export default function CategoriesPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getListings({}).then(({ listings }) => {
+    getListings({ perPage: 50 }).then(({ listings }) => {
       const tally = {};
       listings.forEach((l) => {
         tally[l.category] = (tally[l.category] || 0) + 1;
       });
       tally.all = listings.length;
       setCounts(tally);
-      setLoading(false);
-    });
+    }).catch((error) => {
+      window.dispatchEvent(new CustomEvent('shareloop:error', { detail: error.message }));
+    }).finally(() => setLoading(false));
   }, []);
 
   return (

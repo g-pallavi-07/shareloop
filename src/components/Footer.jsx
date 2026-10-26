@@ -6,10 +6,10 @@ export default function Footer() {
       <div className="footer__inner container">
         <div className="footer__brand">
           <Link to="/" className="footer__logo">
-            <span className="logo-text logo-text--light">semi<em>store</em>.</span>
+            <span className="logo-text logo-text--light">share<em>loop</em>.</span>
           </Link>
           <p className="footer__tagline">Good things deserve<br />another semester.</p>
-          <p className="footer__copy">© 2024 SEMISTORE. MADE FOR CAMPUS LIFE.</p>
+          <p className="footer__copy">© 2024 SHARELOOP. MADE FOR CAMPUS LIFE.</p>
         </div>
 
         <div className="footer__col">
