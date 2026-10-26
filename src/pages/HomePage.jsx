@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ShieldCheck, ArrowRight } from 'lucide-react';
 import ListingCard from '../components/ListingCard.jsx';
-import { getListings } from '../services/api.js';
+import { getCategories, getListings } from '../services/api.js';
 import { useInView } from '../hooks/useInView.js';
 
 // ── Slide counter data ───────────────────────────────────────────────────────
@@ -31,13 +31,24 @@ export default function HomePage() {
   const [listingType, setListingType] = useState('all');
   const [recentListings, setRecentListings] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [listingsError, setListingsError] = useState('');
+  const [categories, setCategories] = useState([]);
   const [currentSlide, setCurrentSlide] = useState(0);
 
   useEffect(() => {
-    getListings({}).then(({ listings }) => {
-      setRecentListings(listings.slice(0, 4));
+    getListings({ perPage: 4 }).then(({ listings }) => {
+      setRecentListings(listings);
+      setLoading(false);
+    }).catch((error) => {
+      setListingsError(error.message || 'Unable to load listings.');
       setLoading(false);
     });
+  }, []);
+
+  useEffect(() => {
+    getCategories()
+      .then(setCategories)
+      .catch((error) => window.dispatchEvent(new CustomEvent('shareloop:error', { detail: error.message })));
   }, []);
 
   useEffect(() => {
@@ -149,15 +160,7 @@ export default function HomePage() {
                   className="search-bar__select"
                 >
                   <option value="all">All categories</option>
-                  <option value="textbooks">Textbooks</option>
-                  <option value="tech-gadgets">Tech &amp; Gadgets</option>
-                  <option value="academic-essentials">Academic Essentials</option>
-                  <option value="lab-equipment">Lab Equipment</option>
-                  <option value="stationery">Stationery</option>
-                  <option value="hostel-essentials">Hostel Essentials</option>
-                  <option value="sports">Sports &amp; Fitness</option>
-                  <option value="cycles">Cycles &amp; Transport</option>
-                  <option value="electronics">Electronics</option>
+                  {categories.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
                 </select>
               </div>
               <div className="search-bar__divider" />
@@ -238,11 +241,18 @@ export default function HomePage() {
               {[1, 2, 3, 4].map((n) => <div key={n} className="listing-card listing-card--skeleton" />)}
             </div>
           ) : (
-            <div className="listing-grid">
-              {recentListings.map((l, i) => (
-                <ListingCard key={l.id} listing={l} delay={i * 80} />
-              ))}
-            </div>
+            listingsError ? (
+              <div className="empty-state">
+                <h3 className="empty-state__heading">{listingsError}</h3>
+                <p className="empty-state__body">Check that the ShareLoop backend and database are running.</p>
+              </div>
+            ) : (
+              <div className="listing-grid">
+                {recentListings.map((l, i) => (
+                  <ListingCard key={l.id} listing={l} delay={i * 80} />
+                ))}
+              </div>
+            )
           )}
         </div>
       </section>

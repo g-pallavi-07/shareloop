@@ -1,316 +1,157 @@
-// API service layer — local-first persistence ready to swap for Flask API calls later
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || 'http://localhost:5000/api').replace(/\/+$/, '');
 
-import {
-  mockListings as initialListings,
-  mockRequests as initialRequests,
-  mockIncomingRequests as initialIncomingRequests,
-  mockCurrentUser,
-  mockUserListings as initialUserListings
-} from '../data/mockData.js';
-
-const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-const STORAGE_KEYS = {
-  LISTINGS: 'shareloop_listings_v2',
-  MY_REQUESTS: 'shareloop_my_requests_v2',
-  INCOMING_REQUESTS: 'shareloop_incoming_requests_v2',
-  USER_LISTINGS: 'shareloop_user_listings_v2'
-};
-
-function getStorage(key, fallback) {
-  try {
-    const item = localStorage.getItem(key);
-    return item ? JSON.parse(item) : fallback;
-  } catch {
-    return fallback;
+async function request(path, options = {}) {
+  const headers = new Headers(options.headers || {});
+  if (options.body && !(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
+  const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...options,
+    headers,
+    credentials: 'include',
+  });
+  const payload = response.status === 204 ? null : await response.json().catch(() => null);
+  if (response.status === 401 && path !== '/auth/login') {
+    window.dispatchEvent(new Event('shareloop:unauthorized'));
   }
+  if (!response.ok) {
+    throw new Error(payload?.error || `Request failed (${response.status}).`);
+  }
+  return payload;
 }
 
-function setStorage(key, value) {
-  try {
-    localStorage.setItem(key, JSON.stringify(value));
-  } catch (err) {
-    console.error('Storage error:', err);
-  }
+function asJson(data) {
+  return JSON.stringify(data);
 }
-
-// Initialize seed data if not present
-function initData() {
-  if (!localStorage.getItem(STORAGE_KEYS.LISTINGS)) {
-    setStorage(STORAGE_KEYS.LISTINGS, initialListings);
-  }
-  if (!localStorage.getItem(STORAGE_KEYS.MY_REQUESTS)) {
-    setStorage(STORAGE_KEYS.MY_REQUESTS, initialRequests);
-  }
-  if (!localStorage.getItem(STORAGE_KEYS.INCOMING_REQUESTS)) {
-    setStorage(STORAGE_KEYS.INCOMING_REQUESTS, initialIncomingRequests);
-  }
-  if (!localStorage.getItem(STORAGE_KEYS.USER_LISTINGS)) {
-    setStorage(STORAGE_KEYS.USER_LISTINGS, initialUserListings);
-  }
-}
-initData();
-
-// --- Listings ---
 
 export async function getListings(filters = {}) {
-  await delay(200);
-  let results = [...getStorage(STORAGE_KEYS.LISTINGS, initialListings)];
+  const params = new URLSearchParams();
+  const mapping = {
+    query: 'q',
+    category: 'category',
+    type: 'type',
+    sort: 'sort',
+    condition: 'condition',
+    minPrice: 'minPrice',
+    maxPrice: 'maxPrice',
+    page: 'page',
+    perPage: 'per_page',
+  };
+  Object.entries(mapping).forEach(([key, apiKey]) => {
+    if (filters[key] !== undefined && filters[key] !== '' && filters[key] !== 'all') {
+      params.set(apiKey, filters[key]);
+    }
+  });
+  return request(`/listings${params.size ? `?${params}` : ''}`);
+}
 
-  if (filters.query) {
-    const q = filters.query.toLowerCase().trim();
-    results = results.filter(
-      (l) =>
-        l.title.toLowerCase().includes(q) ||
-        l.description.toLowerCase().includes(q) ||
-        (l.tags && l.tags.some((t) => t.toLowerCase().includes(q))) ||
-        (l.categoryLabel && l.categoryLabel.toLowerCase().includes(q))
-    );
-  }
-
-  if (filters.category && filters.category !== 'all') {
-    results = results.filter((l) => l.category === filters.category);
-  }
-
-  if (filters.type && filters.type !== 'all') {
-    results = results.filter((l) => l.type === filters.type);
-  }
-
-  if (filters.condition) {
-    results = results.filter((l) => l.condition === filters.condition);
-  }
-
-  if (filters.minPrice != null && filters.minPrice !== '') {
-    results = results.filter((l) => l.price == null || l.price >= Number(filters.minPrice));
-  }
-
-  if (filters.maxPrice != null && filters.maxPrice !== '') {
-    results = results.filter((l) => l.price == null || l.price <= Number(filters.maxPrice));
-  }
-
-  if (filters.sort === 'price-asc') {
-    results.sort((a, b) => (a.price ?? 0) - (b.price ?? 0));
-  } else if (filters.sort === 'price-desc') {
-    results.sort((a, b) => (b.price ?? 0) - (a.price ?? 0));
-  } else {
-    // Newest first
-    results.sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
-  }
-
-  return { listings: results, total: results.length };
+export async function getCategories() {
+  const { categories } = await request('/categories');
+  return categories;
 }
 
 export async function getListingById(id) {
-  await delay(150);
-  const listings = getStorage(STORAGE_KEYS.LISTINGS, initialListings);
-  const listing = listings.find((l) => String(l.id) === String(id));
-  if (!listing) throw new Error('Listing not found');
+  const { listing } = await request(`/listings/${encodeURIComponent(id)}`);
   return listing;
 }
 
 export async function createListing(data) {
-  await delay(350);
-  const listings = getStorage(STORAGE_KEYS.LISTINGS, initialListings);
-  const userListings = getStorage(STORAGE_KEYS.USER_LISTINGS, initialUserListings);
-
-  const newListing = {
-    ...data,
-    id: String(Date.now()),
-    createdAt: new Date().toISOString().split('T')[0],
-    available: true,
-    views: 1,
-    requests: 0
-  };
-
-  const updatedListings = [newListing, ...listings];
-  const updatedUserListings = [newListing, ...userListings];
-
-  setStorage(STORAGE_KEYS.LISTINGS, updatedListings);
-  setStorage(STORAGE_KEYS.USER_LISTINGS, updatedUserListings);
-
-  return newListing;
+  const { listing } = await request('/listings', { method: 'POST', body: asJson(data) });
+  return listing;
 }
 
-export async function updateListing(id, updatedFields) {
-  await delay(300);
-  const listings = getStorage(STORAGE_KEYS.LISTINGS, initialListings);
-  const userListings = getStorage(STORAGE_KEYS.USER_LISTINGS, initialUserListings);
-
-  const updatedListings = listings.map((l) =>
-    String(l.id) === String(id) ? { ...l, ...updatedFields } : l
-  );
-  const updatedUserListings = userListings.map((l) =>
-    String(l.id) === String(id) ? { ...l, ...updatedFields } : l
-  );
-
-  setStorage(STORAGE_KEYS.LISTINGS, updatedListings);
-  setStorage(STORAGE_KEYS.USER_LISTINGS, updatedUserListings);
-
-  const target = updatedListings.find((l) => String(l.id) === String(id));
-  return target;
+export async function updateListing(id, data) {
+  const { listing } = await request(`/listings/${encodeURIComponent(id)}`, { method: 'PATCH', body: asJson(data) });
+  return listing;
 }
 
 export async function deleteListing(id) {
-  await delay(250);
-  const listings = getStorage(STORAGE_KEYS.LISTINGS, initialListings);
-  const userListings = getStorage(STORAGE_KEYS.USER_LISTINGS, initialUserListings);
-
-  setStorage(
-    STORAGE_KEYS.LISTINGS,
-    listings.filter((l) => String(l.id) !== String(id))
-  );
-  setStorage(
-    STORAGE_KEYS.USER_LISTINGS,
-    userListings.filter((l) => String(l.id) !== String(id))
-  );
-  return { success: true, id };
+  return request(`/listings/${encodeURIComponent(id)}`, { method: 'DELETE' });
 }
 
-export async function toggleListingAvailability(id) {
-  await delay(200);
-  const listings = getStorage(STORAGE_KEYS.LISTINGS, initialListings);
-  const item = listings.find((l) => String(l.id) === String(id));
-  if (!item) throw new Error('Listing not found');
-
-  return updateListing(id, { available: !item.available });
+export async function toggleListingAvailability(id, available) {
+  return updateListing(id, { status: available ? 'available' : 'unavailable' });
 }
-
-// --- Requests ---
 
 export async function getMyRequests() {
-  await delay(150);
-  return getStorage(STORAGE_KEYS.MY_REQUESTS, initialRequests);
+  const { orders } = await request('/orders/outgoing');
+  return orders;
 }
 
 export async function getIncomingRequests() {
-  await delay(150);
-  return getStorage(STORAGE_KEYS.INCOMING_REQUESTS, initialIncomingRequests);
+  const { orders } = await request('/orders/incoming');
+  return orders;
 }
 
-export async function createRequest(listingId, message) {
-  await delay(300);
-  const listings = getStorage(STORAGE_KEYS.LISTINGS, initialListings);
-  const listing = listings.find((l) => String(l.id) === String(listingId));
-
-  const myRequests = getStorage(STORAGE_KEYS.MY_REQUESTS, initialRequests);
-  const incomingRequests = getStorage(STORAGE_KEYS.INCOMING_REQUESTS, initialIncomingRequests);
-
-  const newReq = {
-    id: `req_${Date.now()}`,
-    listingId: String(listingId),
-    listingTitle: listing ? listing.title : 'Campus Item',
-    type: listing ? listing.type : 'sale',
-    requesterId: 'current-user',
-    requesterName: 'You (Demo)',
-    sellerId: listing?.seller?.id || 'u_seller',
-    sellerName: listing?.seller?.name || 'Fellow Student',
-    status: 'pending',
-    message: message || "Hi, I'm interested in this item!",
-    createdAt: new Date().toISOString().split('T')[0]
-  };
-
-  const updatedMyRequests = [newReq, ...myRequests];
-  setStorage(STORAGE_KEYS.MY_REQUESTS, updatedMyRequests);
-
-  // If this item belongs to the user, also register in incoming
-  const updatedIncoming = [
-    {
-      ...newReq,
-      requesterDept: 'Computer Science, 3rd Year'
-    },
-    ...incomingRequests
-  ];
-  setStorage(STORAGE_KEYS.INCOMING_REQUESTS, updatedIncoming);
-
-  // Increment request count on listing
-  if (listing) {
-    await updateListing(listingId, { requests: (listing.requests || 0) + 1 });
-  }
-
-  return newReq;
+export async function createRequest(listingId, message, expectedReturnDate) {
+  const { order } = await request('/orders', {
+    method: 'POST',
+    body: asJson({
+      listing_id: Number(listingId),
+      buyer_note: message,
+      expected_return_date: expectedReturnDate || undefined,
+    }),
+  });
+  return order;
 }
 
 export async function updateRequestStatus(requestId, newStatus) {
-  await delay(200);
-  const incoming = getStorage(STORAGE_KEYS.INCOMING_REQUESTS, initialIncomingRequests);
-  const updatedIncoming = incoming.map((r) =>
-    r.id === requestId ? { ...r, status: newStatus } : r
-  );
-  setStorage(STORAGE_KEYS.INCOMING_REQUESTS, updatedIncoming);
-
-  // Also sync in myRequests if matches
-  const my = getStorage(STORAGE_KEYS.MY_REQUESTS, initialRequests);
-  const updatedMy = my.map((r) =>
-    r.id === requestId ? { ...r, status: newStatus } : r
-  );
-  setStorage(STORAGE_KEYS.MY_REQUESTS, updatedMy);
-
-  return { success: true, requestId, status: newStatus };
+  const action = { accepted: 'accept', rejected: 'reject', cancelled: 'cancel', completed: 'complete', returned: 'return' }[newStatus];
+  if (!action) throw new Error('Unsupported request status.');
+  const { order } = await request(`/orders/${encodeURIComponent(requestId)}/${action}`, { method: 'PATCH' });
+  return order;
 }
 
-// --- User ---
-
 export async function getCurrentUser() {
-  await delay(100);
-  return mockCurrentUser;
+  const { user } = await request('/auth/me');
+  return user;
 }
 
 export async function getUserListings() {
-  await delay(150);
-  return getStorage(STORAGE_KEYS.USER_LISTINGS, initialUserListings);
+  const { listings } = await request('/listings/mine');
+  return listings;
 }
 
-// --- Auth (mock with college email verification) ---
-
 export async function login({ email, password }) {
-  await delay(450);
-  if (!email || !password) {
-    throw new Error('Please fill in both email and password.');
-  }
-  const cleanEmail = email.toLowerCase().trim();
-  const isCollegeEmail =
-    cleanEmail.endsWith('.edu') ||
-    cleanEmail.endsWith('.ac.in') ||
-    cleanEmail.endsWith('.edu.in') ||
-    cleanEmail.includes('college') ||
-    cleanEmail.includes('campus');
-
-  if (!isCollegeEmail) {
-    throw new Error('Please enter a valid college email address (e.g. name@college.edu or name@univ.ac.in).');
-  }
-
-  const user = {
-    ...mockCurrentUser,
-    email: cleanEmail,
-    name: cleanEmail.split('@')[0].replace(/[._]/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase())
-  };
-
-  return { user, token: 'mock-jwt-token-' + Date.now() };
+  const { user } = await request('/auth/login', {
+    method: 'POST',
+    body: asJson({ college_email: email, password }),
+  });
+  return { user };
 }
 
 export async function register(data) {
-  await delay(500);
-  const cleanEmail = (data.email || '').toLowerCase().trim();
-  const isCollegeEmail =
-    cleanEmail.endsWith('.edu') ||
-    cleanEmail.endsWith('.ac.in') ||
-    cleanEmail.endsWith('.edu.in') ||
-    cleanEmail.includes('college') ||
-    cleanEmail.includes('campus');
+  const { user } = await request('/auth/register', {
+    method: 'POST',
+    body: asJson({
+      full_name: data.name,
+      college_email: data.email,
+      department: data.department,
+      college_year: data.year,
+      password: data.password,
+    }),
+  });
+  return { user };
+}
 
-  if (!isCollegeEmail) {
-    throw new Error('Registration requires a recognized college email address.');
-  }
+export async function logout() {
+  return request('/auth/logout', { method: 'POST' });
+}
 
-  const user = {
-    id: `user_${Date.now()}`,
-    name: data.name,
-    email: cleanEmail,
-    department: data.department,
-    year: data.year,
-    avatar: null,
-    joinedAt: new Date().toISOString().split('T')[0]
-  };
+export async function getFavorites() {
+  const { listings } = await request('/favorites');
+  return listings;
+}
 
-  return { user, token: 'mock-jwt-token-' + Date.now() };
+export async function addFavorite(id) {
+  return request(`/favorites/${encodeURIComponent(id)}`, { method: 'POST' });
+}
+
+export async function removeFavorite(id) {
+  return request(`/favorites/${encodeURIComponent(id)}`, { method: 'DELETE' });
+}
+
+export async function uploadImage(file) {
+  const form = new FormData();
+  form.append('image', file);
+  const { url } = await request('/uploads/images', { method: 'POST', body: form });
+  return `${API_BASE_URL.replace(/\/api$/, '')}${url}`;
 }

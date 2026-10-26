@@ -36,7 +36,7 @@ export default function RegisterPage() {
     if (!form.department) e.department = 'Select your department.';
     if (!form.year) e.year = 'Select your year.';
     if (!form.password) e.password = 'Password is required.';
-    else if (form.password.length < 6) e.password = 'Password must be at least 6 characters.';
+    else if (form.password.length < 8) e.password = 'Password must be at least 8 characters.';
     if (form.password !== form.confirm) e.confirm = 'Passwords do not match.';
     return e;
   }
@@ -62,7 +62,7 @@ export default function RegisterPage() {
     <div className="auth-page">
       <div className="auth-page__card auth-page__card--wide">
         <div className="auth-page__brand">
-          <span className="logo-text">semi<em>store</em>.</span>
+          <span className="logo-text">share<em>loop</em>.</span>
         </div>
         <h1 className="auth-page__heading">Join the campus exchange</h1>
         <p className="auth-page__sub">Create your account using your college email.</p>
@@ -110,7 +110,7 @@ export default function RegisterPage() {
               <div className="form-input-wrap">
                 <input id="reg-password" type={showPass ? 'text' : 'password'}
                   className={`form-input ${errors.password ? 'form-input--error' : ''}`}
-                  placeholder="Min. 6 characters" value={form.password} onChange={set('password')} />
+                  placeholder="Min. 8 characters" value={form.password} onChange={set('password')} />
                 <button type="button" className="form-input-toggle" onClick={() => setShowPass((v) => !v)}>
                   {showPass ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>

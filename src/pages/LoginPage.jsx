@@ -44,7 +44,7 @@ export default function LoginPage() {
     <div className="auth-page">
       <div className="auth-page__card">
         <div className="auth-page__brand">
-          <span className="logo-text">semi<em>store</em>.</span>
+          <span className="logo-text">share<em>loop</em>.</span>
         </div>
         <h1 className="auth-page__heading">Welcome back</h1>
         <p className="auth-page__sub">Log in with your college email to continue.</p>
@@ -96,7 +96,7 @@ export default function LoginPage() {
           <Link to="/register" className="auth-page__link">Register here</Link>
         </p>
         <p className="auth-page__note">
-          <em>Demo: use any @college.edu address + any password.</em>
+          <em>Sign in with your registered college email.</em>
         </p>
       </div>
     </div>

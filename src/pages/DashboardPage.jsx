@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Plus, Package, ArrowRight, Clock, CheckCircle, XCircle } from 'lucide-react';
 import { useAuth, useToast } from '../context/AppContext.jsx';
-import { getUserListings, getMyRequests, getIncomingRequests } from '../services/api.js';
+import { getUserListings, getMyRequests, getIncomingRequests, updateRequestStatus } from '../services/api.js';
 
 const TABS = ['Overview', 'My Listings', 'Requests Sent', 'Requests Received'];
 
@@ -29,15 +29,33 @@ export default function DashboardPage() {
   const [listings, setListings] = useState([]);
   const [outgoing, setOutgoing] = useState([]);
   const [incoming, setIncoming] = useState([]);
+  const [updatingRequest, setUpdatingRequest] = useState(null);
 
   useEffect(() => {
     if (!isLoggedIn) { navigate('/login'); return; }
-    getUserListings().then(setListings);
-    getMyRequests().then(setOutgoing);
-    getIncomingRequests().then(setIncoming);
-  }, [isLoggedIn]);
+    Promise.all([getUserListings(), getMyRequests(), getIncomingRequests()])
+      .then(([myListings, sent, received]) => {
+        setListings(myListings);
+        setOutgoing(sent);
+        setIncoming(received);
+      })
+      .catch((error) => addToast(error.message || 'Unable to load dashboard data.', 'error'));
+  }, [addToast, isLoggedIn, navigate]);
 
   if (!isLoggedIn) return null;
+
+  async function respondToRequest(requestId, status) {
+    setUpdatingRequest(requestId);
+    try {
+      const updated = await updateRequestStatus(requestId, status);
+      setIncoming((requests) => requests.map((request) => request.id === updated.id ? updated : request));
+      addToast(status === 'accepted' ? 'Request accepted.' : 'Request declined.', 'success');
+    } catch (error) {
+      addToast(error.message || 'Unable to update request.', 'error');
+    } finally {
+      setUpdatingRequest(null);
+    }
+  }
 
   return (
     <div className="dashboard-page">
@@ -91,7 +109,7 @@ export default function DashboardPage() {
                 <span className="stat-card__label">Requests Received</span>
               </div>
               <div className="stat-card">
-                <span className="stat-card__num">{outgoing.filter((r) => r.status === 'accepted').length}</span>
+                <span className="stat-card__num">{outgoing.filter((r) => r.status === 'completed').length}</span>
                 <span className="stat-card__label">Completed Deals</span>
               </div>
             </div>
@@ -168,7 +186,7 @@ export default function DashboardPage() {
                         {' · '}to {r.sellerName}
                       </span>
                       {r.returnDate && (
-                        <span className="request-row__return">Return by: {r.returnDate}</span>
+                        <span className="request-row__return">Return by: {r.expectedReturnDate}</span>
                       )}
                     </div>
                     <StatusBadge status={r.status} />
@@ -199,10 +217,12 @@ export default function DashboardPage() {
                       <blockquote className="request-row__message">"{r.message}"</blockquote>
                     </div>
                     <div className="request-row__actions">
-                      <button className="btn btn--dark btn--sm" onClick={() => addToast('Request accepted!', 'success')}>
+                      <button className="btn btn--dark btn--sm" onClick={() => respondToRequest(r.id, 'accepted')}
+                        disabled={updatingRequest === r.id || r.status !== 'pending'}>
                         Accept
                       </button>
-                      <button className="btn btn--ghost btn--sm" onClick={() => addToast('Request declined.', 'error')}>
+                      <button className="btn btn--ghost btn--sm" onClick={() => respondToRequest(r.id, 'rejected')}
+                        disabled={updatingRequest === r.id || r.status !== 'pending'}>
                         Decline
                       </button>
                     </div>
