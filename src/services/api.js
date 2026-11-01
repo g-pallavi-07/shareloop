@@ -28,6 +28,24 @@ function asJson(data) {
   return JSON.stringify(data);
 }
 
+export async function getNotifications() {
+  const { notifications } = await request('/notifications');
+  return notifications;
+}
+
+export async function markNotificationAsRead(notificationId) {
+  return request(`/notifications/${encodeURIComponent(notificationId)}/read`, {
+    method: 'PATCH',
+  });
+}
+
+export async function markAllNotificationsAsRead() {
+  return request('/notifications/read-all', {
+    method: 'PATCH',
+  });
+}
+
+
 export async function getListings(filters = {}) {
   const params = new URLSearchParams();
   const mapping = {
