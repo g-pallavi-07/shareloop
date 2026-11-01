@@ -1,4 +1,4 @@
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_BASE_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api`;
 
 
 async function request(path, options = {}) {
@@ -154,5 +154,7 @@ export async function uploadImage(file) {
   const form = new FormData();
   form.append('image', file);
   const { url } = await request('/uploads/images', { method: 'POST', body: form });
-  return `${API_BASE_URL.replace(/\/api$/, '')}${url}`;
+  
+  const rootUrl = API_BASE_URL.endsWith('/api') ? API_BASE_URL.slice(0, -4) : API_BASE_URL;
+  return `${rootUrl}${url}`;
 }
