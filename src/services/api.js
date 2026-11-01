@@ -161,6 +161,13 @@ export async function register(data) {
   return { user };
 }
 
+export async function sendOtp(email) {
+  return request('/auth/send-otp', {
+    method: 'POST',
+    body: asJson({ email }),
+  });
+}
+
 export async function logout() {
   return request('/auth/logout', { method: 'POST' });
 }
