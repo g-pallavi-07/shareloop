@@ -1606,7 +1606,7 @@ ul { list-style: none; }
 /* ── Toast ───────────────────────────────────────────────────────────────── */
 .toast-container {
   position: fixed;
-  bottom: 24px;
+  top: 24px;
   right: 24px;
   z-index: 300;
   display: flex;
