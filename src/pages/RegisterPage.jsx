@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { Eye, EyeOff } from 'lucide-react';
-import { register } from '../services/api.js';
+import { register, sendOtp } from '../services/api.js'; // Cleaned up duplicate imports
 import { useAuth, useToast } from '../context/AppContext.jsx';
 
 const YEARS = ['1st Year', '2nd Year', '3rd Year', '4th Year', 'Postgraduate'];
@@ -16,15 +16,27 @@ export default function RegisterPage() {
   const { login: setAuth } = useAuth();
   const { addToast } = useToast();
 
-  const [form, setForm] = useState({ name: '', email: '', department: '', year: '', password: '', confirm: '' });
+  const [form, setForm] = useState({
+    name: '',
+    email: '',
+    department: '',
+    year: '',
+    password: '',
+    confirm: '',
+    otp: ''
+  });
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
   const [errors, setErrors] = useState({});
+  const [otpSent, setOtpSent] = useState(false);
+  const [loadingOtp, setLoadingOtp] = useState(false);
+  const [otpError, setOtpError] = useState('');
 
   function set(key) {
     return (e) => {
       setForm((v) => ({ ...v, [key]: e.target.value }));
       setErrors((v) => ({ ...v, [key]: '' }));
+      if (key === 'email') setOtpError('');
     };
   }
 
@@ -33,16 +45,52 @@ export default function RegisterPage() {
     if (!form.name.trim()) e.name = 'Name is required.';
     if (!form.email) e.email = 'College email is required.';
     else if (!/^.+@.+\..+$/.test(form.email)) e.email = 'Enter a valid email.';
+    else if (!form.email.toLowerCase().endsWith('@nsut.ac.in')) e.email = 'Only @nsut.ac.in emails are allowed.';
+    
     if (!form.department) e.department = 'Select your department.';
     if (!form.year) e.year = 'Select your year.';
     if (!form.password) e.password = 'Password is required.';
     else if (form.password.length < 8) e.password = 'Password must be at least 8 characters.';
     if (form.password !== form.confirm) e.confirm = 'Passwords do not match.';
+    if (otpSent && !form.otp.trim()) e.otp = 'Verification code is required.';
     return e;
   }
 
+  // --- Handshake: Dispatches OTP via secure network connection ---
+  const handleSendOtp = async () => {
+    if (!form.email) {
+      setOtpError('Please enter your college email first.');
+      return;
+    }
+    if (!form.email.toLowerCase().endsWith('@nsut.ac.in')) {
+      setOtpError('Access denied. A valid @nsut.ac.in email is required.');
+      return;
+    }
+    
+    setOtpError('');
+    setLoadingOtp(true);
+    
+    try {
+      await sendOtp(form.email);
+      setOtpSent(true);
+      addToast('Verification code successfully sent to your college inbox!', 'success');
+    } catch (err) {
+      setOtpError(err.message || 'Failed to send verification code.');
+      addToast(err.message || 'Failed to send verification code.', 'error');
+    } finally {
+      setLoadingOtp(false);
+    }
+  };
+
   async function handleSubmit(e) {
     e.preventDefault();
+    
+    if (!otpSent) {
+      setOtpError('Please request and verify an OTP code before creating your account.');
+      addToast('Email verification code required.', 'error');
+      return;
+    }
+
     const errs = validate();
     if (Object.keys(errs).length) { setErrors(errs); return; }
     setLoading(true);
@@ -75,13 +123,40 @@ export default function RegisterPage() {
                 placeholder="Your name" value={form.name} onChange={set('name')} />
               {errors.name && <span className="form-error">{errors.name}</span>}
             </div>
+            
             <div className="form-group">
               <label htmlFor="reg-email" className="form-label">College Email</label>
-              <input id="reg-email" type="email" className={`form-input ${errors.email ? 'form-input--error' : ''}`}
-                placeholder="you@college.edu" value={form.email} onChange={set('email')} />
+              <div style={{ display: 'flex', gap: '8px' }}>
+                <input id="reg-email" type="email" 
+                  className={`form-input ${errors.email ? 'form-input--error' : ''}`}
+                  placeholder="you@nsut.ac.in" value={form.email} onChange={set('email')} 
+                  disabled={otpSent} style={{ flex: 1 }} />
+                <button type="button" className="btn btn--dark" 
+                  onClick={handleSendOtp} disabled={loadingOtp || otpSent || !form.email}
+                  style={{ padding: '0 12px', fontSize: '13px', whiteSpace: 'nowrap', height: '42px' }}>
+                  {loadingOtp ? 'Sending...' : otpSent ? 'Sent ✅' : 'Get Code'}
+                </button>
+              </div>
               {errors.email && <span className="form-error">{errors.email}</span>}
+              {otpError && <span className="form-error">{otpError}</span>}
             </div>
           </div>
+
+          {/* Conditional Layout Row: Appears dynamically once token dispatches successfully */}
+          {otpSent && (
+            <div className="auth-form__row">
+              <div className="form-group">
+                <label htmlFor="otp" className="form-label">Verification Code</label>
+                <input id="otp" type="text" className={`form-input ${errors.otp ? 'form-input--error' : ''}`}
+                  placeholder="Enter 6-digit code" maxLength="6" value={form.otp} onChange={set('otp')} />
+                {errors.otp && <span className="form-error">{errors.otp}</span>}
+              </div>
+              <div className="form-group" style={{ visibility: 'hidden' }}>
+                <label className="form-label">Spacer</label>
+                <input className="form-input" />
+              </div>
+            </div>
+          )}
 
           <div className="auth-form__row">
             <div className="form-group">
@@ -126,7 +201,7 @@ export default function RegisterPage() {
             </div>
           </div>
 
-          <button type="submit" className="btn btn--dark auth-form__submit" disabled={loading}>
+          <button type="submit" className="btn btn--dark auth-form__submit" disabled={loading || !otpSent}>
             {loading ? 'Creating account…' : 'Create Account'}
           </button>
         </form>
