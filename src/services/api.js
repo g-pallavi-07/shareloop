@@ -118,9 +118,14 @@ export async function createRequest(listingId, message, expectedReturnDate) {
 }
 
 export async function updateRequestStatus(requestId, newStatus) {
-  const action = { accepted: 'accept', rejected: 'reject', cancelled: 'cancel', completed: 'complete', returned: 'return' }[newStatus];
+  const action = { accepted: 'accept', rejected: 'reject', cancelled: 'cancel', returned: 'return' }[newStatus];
   if (!action) throw new Error('Unsupported request status.');
   const { order } = await request(`/orders/${encodeURIComponent(requestId)}/${action}`, { method: 'PATCH' });
+  return order;
+}
+
+export async function confirmPurchaseCompletion(requestId) {
+  const { order } = await request(`/orders/${encodeURIComponent(requestId)}/confirm`, { method: 'PATCH' });
   return order;
 }
 
