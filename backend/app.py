@@ -471,13 +471,14 @@ def create_app(test_config=None):
     @app.patch("/api/orders/<int:order_id>/<action>")
     @authenticated
     def change_order(order_id, action):
-        if action not in {"accept", "reject", "cancel", "complete", "return"}:
+        if action not in {"accept", "reject", "cancel", "complete", "confirm", "return"}:
             return error("Unknown order action.", 404)
         db = get_db()
         try:
             with db.cursor() as cursor:
                 cursor.execute(
-                    "SELECT o.*, oi.listing_id, oi.quantity FROM Orders o JOIN OrderItems oi ON oi.order_id=o.order_id "
+                    "SELECT o.*, oi.listing_id, oi.quantity, oi.unit_price FROM Orders o "
+                    "JOIN OrderItems oi ON oi.order_id=o.order_id "
                     "WHERE o.order_id=%s FOR UPDATE",
                     (order_id,),
                 )
@@ -488,7 +489,7 @@ def create_app(test_config=None):
                     return error("Only the seller can respond to this request.", 403)
                 if action in {"cancel"} and order["buyer_id"] != g.user["user_id"]:
                     return error("Only the buyer can cancel this request.", 403)
-                if action in {"complete", "return"} and g.user["user_id"] not in {order["buyer_id"], order["seller_id"]}:
+                if action in {"complete", "confirm", "return"} and g.user["user_id"] not in {order["buyer_id"], order["seller_id"]}:
                     return error("You are not a participant in this transaction.", 403)
                 if action == "accept":
                     if order["status"] != "pending":
@@ -511,9 +512,58 @@ def create_app(test_config=None):
                         return error("Only pending requests can be cancelled.", 409)
                     cursor.execute("UPDATE Orders SET status='cancelled' WHERE order_id=%s", (order_id,))
                 elif action == "complete":
-                    if order["transaction_type"] != "purchase" or order["status"] != "accepted":
-                        return error("Only accepted purchases can be completed with this action.", 409)
-                    cursor.execute("UPDATE Orders SET status='completed', completed_at=CURRENT_TIMESTAMP WHERE order_id=%s", (order_id,))
+                    db.rollback()
+                    return error("Both participants must confirm the handover and payment to complete a purchase.", 409)
+                elif action == "confirm":
+                    if order["transaction_type"] != "purchase":
+                        return error("Only purchase transactions use completion confirmations.", 409)
+                    if order["status"] == "completed":
+                        pass
+                    elif order["status"] != "accepted":
+                        return error("Only accepted purchases can be confirmed.", 409)
+                    else:
+                        user_id = g.user["user_id"]
+                        is_buyer = user_id == order["buyer_id"]
+                        side = "buyer" if is_buyer else "seller"
+                        handover_field = f"{side}_handover_confirmed_at"
+                        payment_field = f"{side}_payment_confirmed_at"
+                        payment_required = order["unit_price"] > 0
+                        cursor.execute(
+                            f"UPDATE Orders SET {handover_field}=COALESCE({handover_field},CURRENT_TIMESTAMP), "
+                            f"{payment_field}=IF(%s,COALESCE({payment_field},CURRENT_TIMESTAMP),{payment_field}) "
+                            "WHERE order_id=%s",
+                            (payment_required, order_id),
+                        )
+                        if order[handover_field] is None:
+                            other_user_id = order["seller_id"] if is_buyer else order["buyer_id"]
+                            role = "buyer" if is_buyer else "seller"
+                            create_notification(
+                                cursor,
+                                other_user_id,
+                                order_id,
+                                "purchase_confirmation",
+                                f"The {role} confirmed the item handover"
+                                + (" and payment." if payment_required else "."),
+                            )
+                        if purchase_fully_confirmed(order, payment_required, user_id):
+                            cursor.execute(
+                                "UPDATE Orders SET status='completed',completed_at=CURRENT_TIMESTAMP WHERE order_id=%s",
+                                (order_id,),
+                            )
+                            create_notification(
+                                cursor,
+                                order["buyer_id"],
+                                order_id,
+                                "purchase_completed",
+                                "Both participants confirmed the purchase. It is now complete.",
+                            )
+                            create_notification(
+                                cursor,
+                                order["seller_id"],
+                                order_id,
+                                "purchase_completed",
+                                "Both participants confirmed the purchase. It is now complete.",
+                            )
                 elif action == "return":
                     if order["transaction_type"] != "borrow" or order["status"] != "accepted":
                         return error("Only accepted borrow transactions can be returned.", 409)
@@ -920,6 +970,8 @@ def order_select():
     return (
         "SELECT o.order_id,o.buyer_id,o.seller_id,o.transaction_type,o.status,o.order_date,"
         "o.expected_return_date,o.actual_return_date,o.buyer_note,o.completed_at,"
+        "o.buyer_handover_confirmed_at,o.seller_handover_confirmed_at,"
+        "o.buyer_payment_confirmed_at,o.seller_payment_confirmed_at,"
         "oi.listing_id,oi.quantity,oi.unit_price,l.title AS listing_title,l.listing_type,"
         "buyer.full_name AS buyer_name,buyer.department AS buyer_department,"
         "seller.full_name AS seller_name "
@@ -930,6 +982,7 @@ def order_select():
 
 
 def order_payload(row):
+    payment_required = row["unit_price"] > 0
     return {
         "id": row["order_id"],
         "listingId": row["listing_id"],
@@ -942,12 +995,38 @@ def order_payload(row):
         "sellerId": row["seller_id"],
         "sellerName": row["seller_name"],
         "status": row["status"],
+        "price": float(row["unit_price"]),
+        "buyerHandoverConfirmed": row["buyer_handover_confirmed_at"] is not None,
+        "sellerHandoverConfirmed": row["seller_handover_confirmed_at"] is not None,
+        "buyerPaymentConfirmed": not payment_required or row["buyer_payment_confirmed_at"] is not None,
+        "sellerPaymentConfirmed": not payment_required or row["seller_payment_confirmed_at"] is not None,
+        "paymentRequired": payment_required,
         "message": row["buyer_note"] or "",
         "createdAt": row["order_date"].isoformat() if row["order_date"] else None,
         "expectedReturnDate": row["expected_return_date"].isoformat() if row["expected_return_date"] else None,
         "actualReturnDate": row["actual_return_date"].isoformat() if row["actual_return_date"] else None,
         "quantity": row["quantity"],
     }
+
+
+def purchase_fully_confirmed(order, payment_required, confirming_user_id):
+    buyer_handover_confirmed = (
+        order["buyer_handover_confirmed_at"] is not None or confirming_user_id == order["buyer_id"]
+    )
+    seller_handover_confirmed = (
+        order["seller_handover_confirmed_at"] is not None or confirming_user_id == order["seller_id"]
+    )
+    if not buyer_handover_confirmed or not seller_handover_confirmed:
+        return False
+    if not payment_required:
+        return True
+    buyer_payment_confirmed = (
+        order["buyer_payment_confirmed_at"] is not None or confirming_user_id == order["buyer_id"]
+    )
+    seller_payment_confirmed = (
+        order["seller_payment_confirmed_at"] is not None or confirming_user_id == order["seller_id"]
+    )
+    return buyer_payment_confirmed and seller_payment_confirmed
 
 
 def get_order(order_id, user_id):

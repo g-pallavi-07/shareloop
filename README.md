@@ -12,6 +12,7 @@ ShareLoop is a campus marketplace for students to buy, borrow, give away, and re
 
 1. Start MySQL Server and connect with an account allowed to create databases/users.
 2. Open and execute `database\schema.sql` in MySQL Workbench.
+   For an existing database, execute `database\migrations\001_purchase_confirmations.sql` once instead.
 3. Execute `database\sample_data.sql`, `database\views.sql`, and optionally `database\queries.sql`.
 4. Create a least-privileged application account after the database exists, using a unique password:
    ```sql
@@ -86,7 +87,7 @@ The browser uses an HTTP-only, signed Flask session cookie rather than putting a
 | POST/DELETE | `/api/favorites/<listing_id>` | Add or remove a favorite |
 | POST | `/api/orders` | Request a purchase, free item, or borrow |
 | GET | `/api/orders`, `/incoming`, `/outgoing` | Participant-scoped order lists |
-| PATCH | `/api/orders/<id>/<accept\|reject\|cancel\|complete\|return>` | Apply a permitted transaction transition |
+| PATCH | `/api/orders/<id>/<accept\|reject\|cancel\|confirm\|return>` | Apply a permitted transaction transition; purchase confirmation requires both participants |
 | POST | `/api/reviews` | Review a completed transaction |
 | POST | `/api/reports` | Report one listing or user |
 | GET/PATCH | `/api/reports` | Admin-only report queue and status updates |
@@ -98,7 +99,7 @@ Listing search parameters include `q`, `category`, `type`, `minPrice`, `maxPrice
 
 ## Transaction policy
 
-Pending requests do not reserve inventory. The seller's acceptance endpoint locks the listing row and checks inventory in a database transaction before decrementing stock, so concurrently accepted requests cannot oversell it. A purchase is completed by an authorized participant after acceptance. Borrowed inventory is returned with the separate `return` action, which records the actual return date and restores quantity. Borrow requests must include a future expected return date.
+Pending requests do not reserve inventory. The seller's acceptance endpoint locks the listing row and checks inventory in a database transaction before decrementing stock, so concurrently accepted requests cannot oversell it. After a purchase is accepted, the buyer and seller must each confirm that the handover (and payment, for paid items) is complete. Only then does the order become completed and appear under the buyer's Received and seller's Sold dashboard sections. Borrowed inventory is returned with the separate `return` action, which records the actual return date and restores quantity. Borrow requests must include a future expected return date.
 
 The API stores payment records only as demonstration data; it does not process real payments. Listing images are stored as generated-name files outside the source tree and referenced by URL in MySQL.
 

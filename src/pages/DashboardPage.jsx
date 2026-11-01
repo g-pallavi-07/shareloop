@@ -12,6 +12,7 @@ import {
 
 import { useAuth, useToast } from '../context/AppContext.jsx';
 import {
+  confirmPurchaseCompletion,
   deleteListing,
   getUserListings,
   getMyRequests,
@@ -24,7 +25,29 @@ const TABS = [
   'My Listings',
   'Requests Sent',
   'Requests Received',
+  'Received',
+  'Sold',
 ];
+
+function isCompletedPurchase(order) {
+  return order.status === 'completed' && order.transactionType === 'purchase';
+}
+
+function seenDealsStorageKey(userId) {
+  return `shareloop_seen_deals_${userId}`;
+}
+
+function readSeenDealIds(userId) {
+  try {
+    const stored = JSON.parse(
+      localStorage.getItem(seenDealsStorageKey(userId)) || '[]'
+    );
+
+    return new Set(Array.isArray(stored) ? stored.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
 
 function StatusBadge({ status }) {
   const map = {
@@ -42,6 +65,11 @@ function StatusBadge({ status }) {
       label: 'Declined',
       cls: 'status--rejected',
       Icon: XCircle,
+    },
+    completed: {
+      label: 'Completed',
+      cls: 'status--completed',
+      Icon: CheckCircle,
     },
   };
 
@@ -64,11 +92,20 @@ export default function DashboardPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
 
+  const userId = user?.id == null ? null : String(user.id);
+
   const [tab, setTab] = useState('Overview');
   const [listings, setListings] = useState([]);
   const [outgoing, setOutgoing] = useState([]);
   const [incoming, setIncoming] = useState([]);
+
+  const [seenDeals, setSeenDeals] = useState(() => ({
+    userId,
+    ids: userId ? readSeenDealIds(userId) : new Set(),
+  }));
+
   const [updatingRequest, setUpdatingRequest] = useState(null);
+  const [confirmingPurchase, setConfirmingPurchase] = useState(null);
   const [deletingListing, setDeletingListing] = useState(null);
 
   // Notification navigation and highlighting
@@ -85,7 +122,7 @@ export default function DashboardPage() {
         ? 'Requests Sent'
         : null;
 
-  // Automatically open the correct dashboard tab
+  // Automatically open the correct tab from a notification
   useEffect(() => {
     if (targetTab) {
       setTab(targetTab);
@@ -122,7 +159,7 @@ export default function DashboardPage() {
       });
   }, [addToast, isLoggedIn, navigate]);
 
-  // Find, scroll to, and highlight the exact request
+  // Find, scroll to and highlight the exact request
   useEffect(() => {
     if (!requestId || !targetTab || !requestsLoaded) return;
 
@@ -164,8 +201,62 @@ export default function DashboardPage() {
     outgoing,
   ]);
 
+  // Completed purchase tracking
+  const seenDealIds =
+    seenDeals.userId === userId
+      ? seenDeals.ids
+      : new Set();
+
+  const receivedDeals = outgoing.filter(isCompletedPurchase);
+  const soldDeals = incoming.filter(isCompletedPurchase);
+
+  const unreadReceivedCount = receivedDeals.filter(
+    (order) => !seenDealIds.has(String(order.id))
+  ).length;
+
+  const unreadSoldCount = soldDeals.filter(
+    (order) => !seenDealIds.has(String(order.id))
+  ).length;
+
   if (!isLoggedIn) return null;
 
+  // Mark Received/Sold deals as seen
+  function openDealsTab(section) {
+    const ids =
+      seenDeals.userId === userId
+        ? seenDeals.ids
+        : readSeenDealIds(userId);
+
+    const orders =
+      section === 'Received' ? receivedDeals : soldDeals;
+
+    const nextIds = new Set(ids);
+
+    orders.forEach((order) => {
+      nextIds.add(String(order.id));
+    });
+
+    setSeenDeals({
+      userId,
+      ids: nextIds,
+    });
+
+    try {
+      localStorage.setItem(
+        seenDealsStorageKey(userId),
+        JSON.stringify([...nextIds])
+      );
+    } catch {
+      addToast(
+        'This tab was marked as seen, but the setting could not be saved.',
+        'error'
+      );
+    }
+
+    setTab(section);
+  }
+
+  // Accept or decline an incoming request
   async function respondToRequest(requestId, status) {
     setUpdatingRequest(requestId);
 
@@ -194,6 +285,143 @@ export default function DashboardPage() {
     }
   }
 
+  // Confirm purchase handover
+  async function confirmPurchase(orderId) {
+    setConfirmingPurchase(orderId);
+
+    try {
+      const updated = await confirmPurchaseCompletion(orderId);
+
+      setOutgoing((requests) =>
+        requests.map((request) =>
+          request.id === updated.id ? updated : request
+        )
+      );
+
+      setIncoming((requests) =>
+        requests.map((request) =>
+          request.id === updated.id ? updated : request
+        )
+      );
+
+      addToast(
+        updated.status === 'completed'
+          ? 'Both parties confirmed. The transaction is complete.'
+          : 'Your confirmation is saved. Waiting for the other party.',
+        'success'
+      );
+    } catch (error) {
+      addToast(
+        error.message || 'Unable to confirm this transaction.',
+        'error'
+      );
+    } finally {
+      setConfirmingPurchase(null);
+    }
+  }
+
+  // Purchase handover confirmation UI
+  function renderPurchaseConfirmation(order) {
+    const viewerIsBuyer =
+      String(user.id) === String(order.requesterId);
+
+    const ownConfirmation = viewerIsBuyer
+      ? order.buyerHandoverConfirmed
+      : order.sellerHandoverConfirmed;
+
+    const otherConfirmation = viewerIsBuyer
+      ? order.sellerHandoverConfirmed
+      : order.buyerHandoverConfirmed;
+
+    return (
+      <div className="request-confirmation">
+        <p className="request-confirmation__title">
+          Confirm the item handover
+          {order.paymentRequired ? ' and payment' : ''}.
+        </p>
+
+        <p className="request-confirmation__status">
+          You: {ownConfirmation ? 'Confirmed' : 'Not confirmed'}
+          {' · '}
+          Other party: {otherConfirmation ? 'Confirmed' : 'Waiting'}
+        </p>
+
+        {ownConfirmation ? (
+          <span className="request-confirmation__waiting">
+            Waiting for the other party to confirm.
+          </span>
+        ) : (
+          <button
+            className="btn btn--dark btn--sm"
+            onClick={() => confirmPurchase(order.id)}
+            disabled={confirmingPurchase === order.id}
+          >
+            {confirmingPurchase === order.id
+              ? 'Saving…'
+              : order.paymentRequired
+                ? 'Confirm handover & payment'
+                : 'Confirm handover'}
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // Render completed purchases
+  function renderCompletedDeals(
+    orders,
+    emptyTitle,
+    emptyBody,
+    otherPartyLabel
+  ) {
+    if (orders.length === 0) {
+      return (
+        <div className="empty-state">
+          <div className="empty-state__icon">📦</div>
+          <h3 className="empty-state__heading">
+            {emptyTitle}
+          </h3>
+          <p className="empty-state__body">
+            {emptyBody}
+          </p>
+        </div>
+      );
+    }
+
+    return (
+      <div className="dashboard-requests">
+        {orders.map((order) => (
+          <div key={order.id} className="request-row">
+            <div className="request-row__info">
+              <Link
+                to={`/listing/${order.listingId}`}
+                className="request-row__title"
+              >
+                {order.listingTitle}
+              </Link>
+
+              <span className="request-row__meta">
+                {otherPartyLabel}{' '}
+                {String(order.requesterId) === String(user.id)
+                  ? order.sellerName
+                  : order.requesterName}
+              </span>
+
+              {order.price > 0 && (
+                <span className="request-row__sub">
+                  ₹{order.price.toLocaleString('en-IN')}
+                </span>
+              )}
+            </div>
+
+            <StatusBadge status={order.status} />
+          </div>
+        ))}
+      </div>
+    );
+  }
+
+  // Delete a listing
   async function removeListing(listing) {
     if (
       !window.confirm(
@@ -261,15 +489,35 @@ export default function DashboardPage() {
               role="tab"
               aria-selected={tab === t}
               className={`dashboard-tabs__tab ${
-                tab === t ? 'dashboard-tabs__tab--active' : ''
+                tab === t
+                  ? 'dashboard-tabs__tab--active'
+                  : ''
               }`}
-              onClick={() => setTab(t)}
+              onClick={() =>
+                t === 'Received' || t === 'Sold'
+                  ? openDealsTab(t)
+                  : setTab(t)
+              }
             >
               {t}
 
-              {t === 'Requests Received' && incoming.length > 0 && (
+              {t === 'Requests Received' &&
+                incoming.length > 0 && (
+                  <span className="dashboard-tabs__badge">
+                    {incoming.length}
+                  </span>
+                )}
+
+              {t === 'Received' &&
+                unreadReceivedCount > 0 && (
+                  <span className="dashboard-tabs__badge">
+                    {unreadReceivedCount}
+                  </span>
+                )}
+
+              {t === 'Sold' && unreadSoldCount > 0 && (
                 <span className="dashboard-tabs__badge">
-                  {incoming.length}
+                  {unreadSoldCount}
                 </span>
               )}
             </button>
@@ -359,9 +607,11 @@ export default function DashboardPage() {
             {listings.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-state__icon">📦</div>
+
                 <h3 className="empty-state__heading">
                   No listings yet
                 </h3>
+
                 <p className="empty-state__body">
                   Create your first listing and start sharing.
                 </p>
@@ -442,9 +692,11 @@ export default function DashboardPage() {
             {outgoing.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-state__icon">📬</div>
+
                 <h3 className="empty-state__heading">
                   No requests sent yet
                 </h3>
+
                 <p className="empty-state__body">
                   Browse the marketplace and request items you need.
                 </p>
@@ -490,9 +742,16 @@ export default function DashboardPage() {
                           Return by: {r.expectedReturnDate}
                         </span>
                       )}
+
+                      {r.status === 'accepted' &&
+                        r.transactionType === 'purchase' &&
+                        renderPurchaseConfirmation(r)}
                     </div>
 
-                    <StatusBadge status={r.status} />
+                    {!(
+                      r.status === 'accepted' &&
+                      r.transactionType === 'purchase'
+                    ) && <StatusBadge status={r.status} />}
                   </div>
                 ))}
               </div>
@@ -506,9 +765,11 @@ export default function DashboardPage() {
             {incoming.length === 0 ? (
               <div className="empty-state">
                 <div className="empty-state__icon">📭</div>
+
                 <h3 className="empty-state__heading">
                   No incoming requests
                 </h3>
+
                 <p className="empty-state__body">
                   When students request your items, they'll appear here.
                 </p>
@@ -541,34 +802,39 @@ export default function DashboardPage() {
                       <blockquote className="request-row__message">
                         "{r.message}"
                       </blockquote>
+
+                      {r.status === 'accepted' &&
+                        r.transactionType === 'purchase' &&
+                        renderPurchaseConfirmation(r)}
                     </div>
 
                     <div className="request-row__actions">
-                      <button
-                        className="btn btn--dark btn--sm"
-                        onClick={() =>
-                          respondToRequest(r.id, 'accepted')
-                        }
-                        disabled={
-                          updatingRequest === r.id ||
-                          r.status !== 'pending'
-                        }
-                      >
-                        Accept
-                      </button>
+                      {r.status === 'pending' ? (
+                        <>
+                          <button
+                            className="btn btn--dark btn--sm"
+                            onClick={() =>
+                              respondToRequest(r.id, 'accepted')
+                            }
+                            disabled={updatingRequest === r.id}
+                          >
+                            Accept
+                          </button>
 
-                      <button
-                        className="btn btn--ghost btn--sm"
-                        onClick={() =>
-                          respondToRequest(r.id, 'rejected')
-                        }
-                        disabled={
-                          updatingRequest === r.id ||
-                          r.status !== 'pending'
-                        }
-                      >
-                        Decline
-                      </button>
+                          <button
+                            className="btn btn--ghost btn--sm"
+                            onClick={() =>
+                              respondToRequest(r.id, 'rejected')
+                            }
+                            disabled={updatingRequest === r.id}
+                          >
+                            Decline
+                          </button>
+                        </>
+                      ) : r.status !== 'accepted' ||
+                        r.transactionType !== 'purchase' ? (
+                        <StatusBadge status={r.status} />
+                      ) : null}
                     </div>
                   </div>
                 ))}
@@ -577,7 +843,32 @@ export default function DashboardPage() {
           </div>
         )}
 
+        {/* Received Purchases */}
+        {tab === 'Received' && (
+          <div className="dashboard-section">
+            {renderCompletedDeals(
+              receivedDeals,
+              'No items received yet',
+              'Items you receive will appear here after both parties confirm the handover and payment.',
+              'From',
+            )}
+          </div>
+        )}
+
+        {/* Sold Purchases */}
+        {tab === 'Sold' && (
+          <div className="dashboard-section">
+            {renderCompletedDeals(
+              soldDeals,
+              'No items sold yet',
+              'Items you sell will appear here after both parties confirm the handover and payment.',
+              'To',
+            )}
+          </div>
+        )}
+
       </div>
     </div>
   );
 }
+

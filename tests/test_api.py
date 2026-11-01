@@ -1,6 +1,6 @@
 import unittest
 
-from backend.app import create_app, slug, validate_listing
+from backend.app import create_app, purchase_fully_confirmed, slug, validate_listing
 
 
 class ApiTestCase(unittest.TestCase):
@@ -14,10 +14,19 @@ class ApiTestCase(unittest.TestCase):
         self.assertEqual(response.get_json()["database"], "not_checked")
 
     def test_private_routes_reject_anonymous_users(self):
-        for path in ("/api/auth/me", "/api/listings/mine", "/api/favorites", "/api/orders"):
+        for path in (
+            "/api/auth/me",
+            "/api/listings/mine",
+            "/api/favorites",
+            "/api/orders",
+        ):
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 401)
+
+    def test_purchase_confirmation_rejects_anonymous_users(self):
+        response = self.client.patch("/api/orders/1/confirm")
+        self.assertEqual(response.status_code, 401)
 
     def test_login_requires_credentials_before_database_access(self):
         response = self.client.post("/api/auth/login", json={})
@@ -61,6 +70,23 @@ class ApiTestCase(unittest.TestCase):
     def test_category_slugs_match_existing_frontend_filters(self):
         self.assertEqual(slug("Sports & Fitness"), "sports")
         self.assertEqual(slug("Cycles & Transport"), "cycles")
+
+    def test_purchase_completion_requires_both_parties_and_payment_when_needed(self):
+        order = {
+            "buyer_id": 1,
+            "seller_id": 2,
+            "buyer_handover_confirmed_at": None,
+            "seller_handover_confirmed_at": None,
+            "buyer_payment_confirmed_at": None,
+            "seller_payment_confirmed_at": None,
+        }
+        self.assertFalse(purchase_fully_confirmed(order, True, 1))
+        order["buyer_handover_confirmed_at"] = object()
+        order["buyer_payment_confirmed_at"] = object()
+        self.assertFalse(purchase_fully_confirmed(order, True, 1))
+        order["seller_handover_confirmed_at"] = object()
+        self.assertTrue(purchase_fully_confirmed(order, True, 2))
+        self.assertTrue(purchase_fully_confirmed(order, False, 1))
 
 
 if __name__ == "__main__":
