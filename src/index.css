@@ -1950,3 +1950,20 @@ ul { list-style: none; }
     padding: 13px;
   }
 }
+.request-row--highlighted {
+  background: #fff0f5 !important;
+  border: 2px solid #bd5579 !important;
+  border-radius: 12px;
+  animation: request-highlight 1.2s ease-in-out 2;
+  scroll-margin-top: 120px;
+}
+
+@keyframes request-highlight {
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(189, 85, 121, 0);
+  }
+
+  50% {
+    box-shadow: 0 0 0 6px rgba(189, 85, 121, 0.18);
+  }
+}

@@ -102,8 +102,8 @@ export default function Header() {
   }
 
   async function handleNotificationClick(notification) {
-    if (notification.is_read) return;
-
+  // Mark it as read if it hasn't been read already.
+  if (!notification.is_read) {
     try {
       await markNotificationAsRead(notification.notification_id);
 
@@ -120,6 +120,27 @@ export default function Header() {
       );
     }
   }
+
+  // Navigate to the exact request.
+  const orderId = notification.order_id;
+  const type = notification.notification_type;
+
+  if (orderId && type === 'request_received') {
+    navigate(
+      `/dashboard?tab=received&requestId=${encodeURIComponent(orderId)}`
+    );
+  } else if (
+    orderId &&
+    ['request_accepted', 'request_rejected'].includes(type)
+  ) {
+    navigate(
+      `/dashboard?tab=sent&requestId=${encodeURIComponent(orderId)}`
+    );
+  }
+
+  setNotificationsOpen(false);
+  setMenuOpen(false);
+}
 
   async function handleMarkAllAsRead() {
     if (unreadCount === 0) return;
