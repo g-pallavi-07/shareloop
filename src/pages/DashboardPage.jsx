@@ -17,6 +17,19 @@ function isCompletedPurchase(order) {
   return order.status === 'completed' && order.transactionType === 'purchase';
 }
 
+function seenDealsStorageKey(userId) {
+  return `shareloop_seen_deals_${userId}`;
+}
+
+function readSeenDealIds(userId) {
+  try {
+    const stored = JSON.parse(localStorage.getItem(seenDealsStorageKey(userId)) || '[]');
+    return new Set(Array.isArray(stored) ? stored.map(String) : []);
+  } catch {
+    return new Set();
+  }
+}
+
 function StatusBadge({ status }) {
   const map = {
     pending: { label: 'Pending', cls: 'status--pending', Icon: Clock },
@@ -36,11 +49,16 @@ export default function DashboardPage() {
   const { user, isLoggedIn } = useAuth();
   const { addToast } = useToast();
   const navigate = useNavigate();
+  const userId = user?.id == null ? null : String(user.id);
 
   const [tab, setTab] = useState('Overview');
   const [listings, setListings] = useState([]);
   const [outgoing, setOutgoing] = useState([]);
   const [incoming, setIncoming] = useState([]);
+  const [seenDeals, setSeenDeals] = useState(() => ({
+    userId,
+    ids: userId ? readSeenDealIds(userId) : new Set(),
+  }));
   const [updatingRequest, setUpdatingRequest] = useState(null);
   const [confirmingPurchase, setConfirmingPurchase] = useState(null);
   const [deletingListing, setDeletingListing] = useState(null);
@@ -56,7 +74,27 @@ export default function DashboardPage() {
       .catch((error) => addToast(error.message || 'Unable to load dashboard data.', 'error'));
   }, [addToast, isLoggedIn, navigate]);
 
+  const seenDealIds = seenDeals.userId === userId ? seenDeals.ids : new Set();
+  const receivedDeals = outgoing.filter(isCompletedPurchase);
+  const soldDeals = incoming.filter(isCompletedPurchase);
+  const unreadReceivedCount = receivedDeals.filter((order) => !seenDealIds.has(String(order.id))).length;
+  const unreadSoldCount = soldDeals.filter((order) => !seenDealIds.has(String(order.id))).length;
+
   if (!isLoggedIn) return null;
+
+  function openDealsTab(section) {
+    const ids = seenDeals.userId === userId ? seenDeals.ids : readSeenDealIds(userId);
+    const orders = section === 'Received' ? receivedDeals : soldDeals;
+    const nextIds = new Set(ids);
+    orders.forEach((order) => nextIds.add(String(order.id)));
+    setSeenDeals({ userId, ids: nextIds });
+    try {
+      localStorage.setItem(seenDealsStorageKey(userId), JSON.stringify([...nextIds]));
+    } catch {
+      addToast('This tab was marked as seen, but the setting could not be saved.', 'error');
+    }
+    setTab(section);
+  }
 
   async function respondToRequest(requestId, status) {
     setUpdatingRequest(requestId);
@@ -186,17 +224,17 @@ export default function DashboardPage() {
               role="tab"
               aria-selected={tab === t}
               className={`dashboard-tabs__tab ${tab === t ? 'dashboard-tabs__tab--active' : ''}`}
-              onClick={() => setTab(t)}
+              onClick={() => (t === 'Received' || t === 'Sold' ? openDealsTab(t) : setTab(t))}
             >
               {t}
               {t === 'Requests Received' && incoming.length > 0 && (
                 <span className="dashboard-tabs__badge">{incoming.length}</span>
               )}
-              {t === 'Received' && outgoing.filter(isCompletedPurchase).length > 0 && (
-                <span className="dashboard-tabs__badge">{outgoing.filter(isCompletedPurchase).length}</span>
+              {t === 'Received' && unreadReceivedCount > 0 && (
+                <span className="dashboard-tabs__badge">{unreadReceivedCount}</span>
               )}
-              {t === 'Sold' && incoming.filter(isCompletedPurchase).length > 0 && (
-                <span className="dashboard-tabs__badge">{incoming.filter(isCompletedPurchase).length}</span>
+              {t === 'Sold' && unreadSoldCount > 0 && (
+                <span className="dashboard-tabs__badge">{unreadSoldCount}</span>
               )}
             </button>
           ))}
