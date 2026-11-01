@@ -1,6 +1,5 @@
 import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Layout from './components/Layout.jsx';
-import AboutPage from './pages/AboutPage.jsx';
 import CategoriesPage from './pages/CategoriesPage.jsx';
 import HomePage from './pages/HomePage.jsx';
 import MarketplacePage from './pages/MarketplacePage.jsx';
@@ -41,7 +40,6 @@ export default function App() {
                 <Route path="/create-listing" element={<CreateListingPage />} />
                 <Route path="/favorites" element={<FavoritesPage />} />
                 <Route path="/how-it-works" element={<HowItWorksPage />} />
-                <Route path="/about" element={<AboutPage />} />
                 <Route path="/categories" element={<CategoriesPage />} />
                 <Route path="*" element={<NotFoundPage />} />
               </Route>

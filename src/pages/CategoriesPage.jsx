@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link } from 'react-router-dom';
 import { ArrowRight, BookOpen, Laptop, Compass, FlaskConical, Bed, PenTool, Dumbbell, Bike, Headphones, Armchair, Shirt, Layers } from 'lucide-react';
 import { getListings } from '../services/api.js';
 
@@ -91,18 +91,18 @@ const CATEGORY_DEFINITIONS = [
 ];
 
 export default function CategoriesPage() {
-  const navigate = useNavigate();
   const [counts, setCounts] = useState({});
+  const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    getListings({ perPage: 50 }).then(({ listings }) => {
+    getListings({ perPage: 50 }).then(({ listings, total: listingTotal }) => {
       const tally = {};
       listings.forEach((l) => {
         tally[l.category] = (tally[l.category] || 0) + 1;
       });
-      tally.all = listings.length;
       setCounts(tally);
+      setTotal(listingTotal ?? listings.length);
     }).catch((error) => {
       window.dispatchEvent(new CustomEvent('shareloop:error', { detail: error.message }));
     }).finally(() => setLoading(false));
@@ -111,36 +111,49 @@ export default function CategoriesPage() {
   return (
     <div className="categories-page">
       <div className="categories-page__hero">
-        <div className="container">
-          <p className="section-eyebrow">EXPLORE BY CATEGORY</p>
-          <h1 className="categories-page__heading">Campus Marketplace Departments</h1>
-          <p className="categories-page__sub">
-            Find exactly what you need for this semester — from textbooks and lab gear to hostel furniture and transport.
-          </p>
+        <div className="container categories-page__hero-inner">
+          <div>
+            <p className="section-eyebrow">THE CAMPUS EDIT</p>
+            <h1 className="categories-page__heading">Find your corner<br />of campus.</h1>
+            <p className="categories-page__sub">
+              From first-day essentials to the little things that make a semester yours.
+            </p>
+          </div>
+          <div className="categories-page__hero-note" aria-label={`${CATEGORY_DEFINITIONS.length - 1} categories and ${loading ? 'loading' : total} active listings`}>
+            <span className="categories-page__hero-note-label">A little of everything</span>
+            <strong>{CATEGORY_DEFINITIONS.length - 1}<span> categories</span></strong>
+            <span className="categories-page__hero-note-foot">{loading ? 'Loading listings' : `${total} active listings`}</span>
+          </div>
         </div>
       </div>
 
       <div className="container categories-page__content">
+        <div className="categories-page__section-heading">
+          <div>
+            <p className="section-eyebrow">BROWSE THE DEPARTMENTS</p>
+            <h2>Good finds, sorted.</h2>
+          </div>
+          <span>{CATEGORY_DEFINITIONS.length} ways to share</span>
+        </div>
         <div className="categories-full-grid">
           {CATEGORY_DEFINITIONS.map((cat) => {
             const Icon = cat.icon;
-            const count = counts[cat.id] ?? 0;
+            const count = cat.id === 'all' ? total : counts[cat.id] ?? 0;
             return (
-              <div
+              <Link
                 key={cat.id}
                 className="category-card"
-                onClick={() =>
-                  navigate(cat.id === 'all' ? '/marketplace' : `/marketplace?category=${cat.id}`)
-                }
+                to={cat.id === 'all' ? '/marketplace' : `/marketplace?category=${cat.id}`}
+                style={{ '--category-accent': cat.color }}
               >
-                <div className="category-card__icon-wrap" style={{ backgroundColor: cat.color }}>
-                  <Icon size={24} color="#ffffff" />
+                <div className="category-card__icon-wrap">
+                  <Icon size={21} strokeWidth={1.8} />
                 </div>
                 <div className="category-card__info">
                   <div className="category-card__header">
                     <h3 className="category-card__title">{cat.label}</h3>
                     <span className="category-card__count">
-                      {loading ? '…' : `${count} item${count !== 1 ? 's' : ''}`}
+                      {loading ? '…' : `${count} ${count === 1 ? 'item' : 'items'}`}
                     </span>
                   </div>
                   <p className="category-card__desc">{cat.desc}</p>
@@ -148,25 +161,22 @@ export default function CategoriesPage() {
                 <div className="category-card__arrow">
                   <ArrowRight size={18} />
                 </div>
-              </div>
+              </Link>
             );
           })}
         </div>
 
-        {/* Quick action banner */}
         <div className="categories-banner">
-          <div>
-            <h3 className="categories-banner__title">Looking for free giveaways or borrowable items?</h3>
+          <div className="categories-banner__copy">
+            <span className="categories-banner__eyebrow">PASS IT ON</span>
+            <h3 className="categories-banner__title">Some of the best things cost nothing.</h3>
             <p className="categories-banner__sub">
-              Seniors frequently give away lab coats, notes, and study gear for free to incoming students.
+              Find a freebie, borrow what you need, and keep campus life in circulation.
             </p>
           </div>
-          <button
-            className="btn btn--dark"
-            onClick={() => navigate('/marketplace?type=free')}
-          >
-            Explore Free &amp; Borrows <ArrowRight size={16} />
-          </button>
+          <Link className="categories-banner__link" to="/marketplace?type=free">
+            Explore free &amp; borrow <ArrowRight size={17} />
+          </Link>
         </div>
       </div>
     </div>

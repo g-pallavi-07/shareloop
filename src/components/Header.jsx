@@ -32,7 +32,6 @@ export default function Header() {
           <Link to="/marketplace" className="header__nav-link" onClick={() => setMenuOpen(false)}>Marketplace</Link>
           <Link to="/categories" className="header__nav-link" onClick={() => setMenuOpen(false)}>Categories</Link>
           <Link to="/how-it-works" className="header__nav-link" onClick={() => setMenuOpen(false)}>How It Works</Link>
-          <Link to="/about" className="header__nav-link" onClick={() => setMenuOpen(false)}>About</Link>
           {isLoggedIn && (
             <Link to="/dashboard" className="header__nav-link" onClick={() => setMenuOpen(false)}>Dashboard</Link>
           )}
