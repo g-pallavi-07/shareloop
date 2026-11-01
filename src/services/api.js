@@ -1,4 +1,9 @@
-const API_BASE_URL = `${import.meta.env.VITE_API_URL || 'http://localhost:5000'}/api`;
+// Cleanly strip out any accidental trailing slashes from your base URL variable:
+const rawUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const cleanUrl = rawUrl.endsWith('/') ? rawUrl.slice(0, -1) : rawUrl;
+
+const API_BASE_URL = `${cleanUrl}/api`;
+
 
 
 async function request(path, options = {}) {
