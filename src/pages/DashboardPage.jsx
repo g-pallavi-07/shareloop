@@ -211,6 +211,9 @@ export default function DashboardPage() {
 
   const receivedDeals = outgoing.filter(isCompleted);
   const soldDeals = incoming.filter(isCompleted);
+  const pendingIncomingCount = incoming.filter(
+    (request) => request.status === 'pending'
+  ).length;
 
   const unreadReceivedCount = receivedDeals.filter(
     (order) => !seenDealIds.has(String(order.id))
@@ -540,9 +543,9 @@ export default function DashboardPage() {
             >
               {t}
               {t === 'Requests Received' &&
-                incoming.length > 0 && (
+                pendingIncomingCount > 0 && (
                   <span className="dashboard-tabs__badge">
-                    {incoming.length}
+                    {pendingIncomingCount}
                   </span>
                 )}
 
