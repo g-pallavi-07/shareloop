@@ -11,6 +11,7 @@ from email.mime.text import MIMEText
 import random
 import threading
 
+
 from dotenv import load_dotenv
 from flask import Flask, g, jsonify, request, send_from_directory, session
 from flask_cors import CORS
@@ -69,6 +70,7 @@ def create_app(test_config=None):
         methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
     )
 
+
     app.teardown_appcontext(close_db)
 
     @app.errorhandler(413)
@@ -79,40 +81,37 @@ def create_app(test_config=None):
     def http_error(exc):
         return error(exc.description, exc.code)
 
+    def send_otp_email(target_email, otp):
+        # 💡 Hardcoding these directly guarantees Render won't fetch empty environment configurations
+        smtp_server = "smtp.gmail.com"
+        smtp_port = 465
+        
+        sender_email = os.getenv("MAIL_USERNAME")
+        sender_password = os.getenv("MAIL_PASSWORD")
+        
+        if not sender_email or not sender_password:
+            raise ValueError("SMTP credentials (MAIL_USERNAME/MAIL_PASSWORD) missing from your environment variables panel.")
+
+        msg = MIMEText(
+            f"Welcome to ShareLoop!\n\n"
+            f"Your 6-digit campus verification code is: {otp}\n"
+            f"This code will expire in 5 minutes.\n\n"
+            f"If you did not request this code, please ignore this email."
+        )
+        msg["Subject"] = "[ShareLoop] Campus Email Verification Code"
+        msg["From"] = sender_email
+        msg["To"] = target_email
+        
+        # Immediate secure SSL connection socket handling
+        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
+            server.login(sender_email, sender_password)
+            server.sendmail(sender_email, target_email, msg.as_string())
+
+
     @app.errorhandler(Exception)
     def unexpected_error(exc):
         app.logger.exception("Unhandled application error: %s", exc)
         return error("The server could not complete the request.", 500)
-
-    # 💡 Thread worker targets secure SSL connection properties without delaying the client request response
-    def send_otp_email_worker(target_email, otp, flask_app):
-        with flask_app.app_context():
-            smtp_server = "smtp.gmail.com"
-            smtp_port = 465
-            sender_email = os.getenv("MAIL_USERNAME")
-            sender_password = os.getenv("MAIL_PASSWORD")
-            
-            if not sender_email or not sender_password:
-                flask_app.logger.error("SMTP credentials (MAIL_USERNAME/MAIL_PASSWORD) missing from your environment variables panel.")
-                return
-
-            msg = MIMEText(
-                f"Welcome to ShareLoop!\n\n"
-                f"Your 6-digit campus verification code is: {otp}\n"
-                f"This code will expire in 5 minutes.\n\n"
-                f"If you did not request this code, please ignore this email."
-            )
-            msg["Subject"] = "[ShareLoop] Campus Email Verification Code"
-            msg["From"] = sender_email
-            msg["To"] = target_email
-            
-            try:
-                with smtplib.SMTP_SSL(smtp_server, smtp_port, timeout=10) as server:
-                    server.login(sender_email, sender_password)
-                    server.sendmail(sender_email, target_email, msg.as_string())
-                flask_app.logger.info(f"Background verification code sent cleanly to {target_email}")
-            except Exception as e:
-                flask_app.logger.error(f"Background email delivery failure: {e}")
 
     @app.get("/api/health")
     def health():
@@ -120,6 +119,7 @@ def create_app(test_config=None):
 
     @app.route("/api/auth/send-otp", methods=["POST", "OPTIONS"])
     def send_otp():
+
         if request.method == 'OPTIONS':
             return jsonify({"success": True}), 200
         
@@ -129,40 +129,39 @@ def create_app(test_config=None):
         if not email or not EMAIL_PATTERN.match(email):
             return error("Please provide a valid email address.", 400)
             
+        # Strictly enforce the NSUT domain rule here
         if not email.endswith("@nsut.ac.in"):
             return error("Access denied. Only @nsut.ac.in college emails are authorized.", 403)
             
+        # Check if the user already has an active account
         with get_db().cursor() as cursor:
             cursor.execute("SELECT user_id FROM Users WHERE college_email = %s", (email,))
             if cursor.fetchone():
                 return error("An account with this email already exists.", 409)
 
+        # Generate a random 6-digit code and set it to expire in 5 minutes
         otp = f"{random.randint(100000, 999999)}"
         expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         
         db = get_db()
         try:
             with db.cursor() as cursor:
-                # 💡 Using standard VALUES() function makes this completely bulletproof across all versions
+                # Save the OTP or overwrite it if they click "Resend"
                 cursor.execute(
                     "INSERT INTO EmailOTPs (email, otp_code, expires_at) VALUES (%s, %s, %s) "
-                    "ON DUPLICATE KEY UPDATE otp_code = VALUES(otp_code), expires_at = VALUES(expires_at)",
+                    "AS new_otp ON DUPLICATE KEY UPDATE otp_code = new_otp.otp_code, expires_at = new_otp.expires_at",
                     (email, otp, expires_at)
                 )
             db.commit()
             
-            # Spin up background thread worker to bypass Gunicorn timeouts
-            threading.Thread(
-                target=send_otp_email_worker, 
-                args=(email, otp, app._get_current_object())
-            ).start()
+            # Fire the email out
+            send_otp_email(email, otp)
+            return jsonify({"success": True, "message": "Verification code sent successfully."}), 200
             
-            return jsonify({"success": True, "message": "Verification token processing initiated."}), 200
-    
         except Exception as e:
             db.rollback()
-            app.logger.error(f"OTP Generation DB Error: {e}")
-            return error("Failed to process your verification request.", 500)
+            app.logger.error(f"OTP Flow Exception: {e}")
+            return error("Failed to send verification email. Please try again later.", 500)
 
     @app.post("/api/auth/register")
     def register():
@@ -172,7 +171,7 @@ def create_app(test_config=None):
         password = data.get("password", "")
         department = clean_text(data.get("department"), 120)
         year = clean_text(data.get("college_year") or data.get("year"), 40)
-        otp_input = clean_text(data.get("otp"), 6)
+        otp_input = clean_text(data.get("otp"), 6)  # <-- Get the OTP from the user's request
         
         if not name or not EMAIL_PATTERN.match(email) or not department or not year:
             return error("Enter a name, valid college email, department, and year.")
@@ -186,6 +185,7 @@ def create_app(test_config=None):
             
         db = get_db()
         
+        # Pull the record from our database to check validity
         with db.cursor() as cursor:
             cursor.execute("SELECT otp_code, expires_at FROM EmailOTPs WHERE email=%s", (email,))
             otp_record = cursor.fetchone()
@@ -196,6 +196,7 @@ def create_app(test_config=None):
         if datetime.now(timezone.utc) > otp_record["expires_at"]:
             return error("Verification code has expired. Please request a new code.", 400)
 
+        # Everything is valid! Proceed with creating the user account
         try:
             with db.cursor() as cursor:
                 cursor.execute(
@@ -204,6 +205,8 @@ def create_app(test_config=None):
                     (name, email, generate_password_hash(password), department, year),
                 )
                 user_id = cursor.lastrowid
+                
+                # Delete the used OTP so it can't be reused maliciously
                 cursor.execute("DELETE FROM EmailOTPs WHERE email=%s", (email,))
         except IntegrityError:
             db.rollback()
@@ -238,8 +241,6 @@ def create_app(test_config=None):
     def logout():
         session.clear()
         return jsonify({"success": True})
-
-    return app
 
     @app.get("/api/auth/me")
     @authenticated
