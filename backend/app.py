@@ -10,6 +10,7 @@ import smtplib
 from email.mime.text import MIMEText
 import random
 import threading
+import requests
 
 
 from dotenv import load_dotenv
@@ -82,31 +83,30 @@ def create_app(test_config=None):
         return error(exc.description, exc.code)
 
     def send_otp_email(target_email, otp):
-        # 💡 Hardcoding these directly guarantees Render won't fetch empty environment configurations
-        smtp_server = "smtp.gmail.com"
-        smtp_port = 465
-        
-        sender_email = os.getenv("MAIL_USERNAME")
-        sender_password = os.getenv("MAIL_PASSWORD")
-        
-        if not sender_email or not sender_password:
-            raise ValueError("SMTP credentials (MAIL_USERNAME/MAIL_PASSWORD) missing from your environment variables panel.")
+        mailer_url = os.getenv("OTP_MAILER_URL")
+        mailer_secret = os.getenv("OTP_MAILER_SECRET")
 
-        msg = MIMEText(
-            f"Welcome to ShareLoop!\n\n"
-            f"Your 6-digit campus verification code is: {otp}\n"
-            f"This code will expire in 5 minutes.\n\n"
-            f"If you did not request this code, please ignore this email."
+        if not mailer_url or not mailer_secret:
+            raise ValueError("OTP mailer environment variables are missing.")
+
+        response = requests.post(
+            mailer_url,
+            json={
+                "secret": mailer_secret,
+                "email": target_email,
+                "otp": str(otp)
+            },
+            timeout=25
         )
-        msg["Subject"] = "[ShareLoop] Campus Email Verification Code"
-        msg["From"] = sender_email
-        msg["To"] = target_email
-        
-        # Immediate secure SSL connection socket handling
-        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, target_email, msg.as_string())
 
+        response.raise_for_status()
+
+        result = response.json()
+
+        if not result.get("ok"):
+            raise RuntimeError(
+                f"OTP email service failed: {result.get('error', 'Unknown error')}"
+            )
 
     @app.errorhandler(Exception)
     def unexpected_error(exc):
@@ -160,7 +160,7 @@ def create_app(test_config=None):
             
         except Exception as e:
             db.rollback()
-            app.logger.error(f"OTP Flow Exception: {e}")
+            app.logger.exception("OTP Flow Exception")
             return error("Failed to send verification email. Please try again later.", 500)
 
     @app.post("/api/auth/register")
