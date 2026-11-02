@@ -10,6 +10,8 @@ import DashboardPage from './pages/DashboardPage.jsx';
 import CreateListingPage from './pages/CreateListingPage.jsx';
 import FavoritesPage from './pages/FavoritesPage.jsx';
 import HowItWorksPage from './pages/HowItWorksPage.jsx';
+import UserProfilePage from './pages/UserProfilePage.jsx';
+import AdminReportsPage from './pages/AdminReportsPage.jsx';
 import { FavoritesProvider, AuthProvider, ToastProvider } from './context/AppContext.jsx';
 
 function NotFoundPage() {
@@ -41,6 +43,8 @@ export default function App() {
                 <Route path="/favorites" element={<FavoritesPage />} />
                 <Route path="/how-it-works" element={<HowItWorksPage />} />
                 <Route path="/categories" element={<CategoriesPage />} />
+                <Route path="/users/:id" element={<UserProfilePage />} />
+                <Route path="/admin/reports" element={<AdminReportsPage />} />
                 <Route path="*" element={<NotFoundPage />} />
               </Route>
             </Routes>
