@@ -27,6 +27,8 @@ ShareLoop is a campus marketplace for students to buy, borrow, give away, and re
    - Seeded admin: `admin@college.edu` (same demo password)
 5. The sample data and password are fictional and intended for local evaluation only.
 
+The schema already includes the `Reviews` and `Reports` tables, their foreign keys, rating and one-target checks, and the unique one-review-per-reviewer/order constraint. These features require no additional database migration. If an older database is missing either table, execute `database\schema.sql` to create missing tables; `CREATE TABLE IF NOT EXISTS` does not retrofit constraints onto an existing table.
+
 The `database\queries.sql` file demonstrates joins, aggregates, grouping, `HAVING`, nested/correlated queries, and transaction summaries. There are no triggers because the application enforces state changes in explicit transactions.
 
 ## Backend setup
@@ -76,6 +78,8 @@ The browser uses an HTTP-only, signed Flask session cookie rather than putting a
 | POST | `/api/auth/logout` | End the current session |
 | GET | `/api/auth/me` | Read the current account |
 | PATCH | `/api/users/me` | Update profile fields |
+| GET | `/api/users/<id>` | Read a public student profile and rating summary |
+| GET | `/api/users/<id>/reviews` | Read a user's ratings and reviewer information |
 | POST | `/api/users/change-password` | Change password |
 | GET | `/api/categories` | List active categories |
 | GET | `/api/listings` | Search/filter/sort/paginate available listings |
@@ -88,9 +92,11 @@ The browser uses an HTTP-only, signed Flask session cookie rather than putting a
 | POST | `/api/orders` | Request a purchase, free item, or borrow |
 | GET | `/api/orders`, `/incoming`, `/outgoing` | Participant-scoped order lists |
 | PATCH | `/api/orders/<id>/<accept\|reject\|cancel\|confirm\|return>` | Apply a permitted transaction transition; purchase confirmation requires both participants |
-| POST | `/api/reviews` | Review a completed transaction |
+| POST | `/api/reviews` | Review a completed transaction (participant-only; one per reviewer/order) |
 | POST | `/api/reports` | Report one listing or user |
-| GET/PATCH | `/api/reports` | Admin-only report queue and status updates |
+| GET | `/api/reports` | Admin-only report queue |
+| PATCH | `/api/reports/<report_id>` | Admin-only report status update |
+| PATCH | `/api/admin/users/<id>/status` | Admin-only account suspend/reactivate action |
 | GET/PATCH | `/api/notifications` | Read own notifications |
 | POST/PATCH/GET | `/api/handover...` | Create/confirm participant-only handovers |
 | POST | `/api/uploads/images` | Upload a JPEG, PNG, GIF, or WebP image (5 MB max) |
@@ -100,6 +106,8 @@ Listing search parameters include `q`, `category`, `type`, `minPrice`, `maxPrice
 ## Transaction policy
 
 Pending requests do not reserve inventory. The seller's acceptance endpoint locks the listing row and checks inventory in a database transaction before decrementing stock, so concurrently accepted requests cannot oversell it. After a purchase is accepted, the buyer and seller must each confirm that the handover (and payment, for paid items) is complete. Only then does the order become completed and appear under the buyer's Received and seller's Sold dashboard sections. Borrowed inventory is returned with the separate `return` action, which records the actual return date and restores quantity. Borrow requests must include a future expected return date.
+
+After an order is completed, either participant can submit one 1–5 star review for the other participant from the dashboard's Received/Sold transaction lists. Public profiles display each review and a database-calculated average. Listing cards/detail views and public profiles provide report forms. Administrators can use **Admin Reports** in the navigation to update report status, remove a reported listing, or suspend/reactivate a reported account; the API independently checks the administrator role.
 
 The API stores payment records only as demonstration data; it does not process real payments. Listing images are stored as generated-name files outside the source tree and referenced by URL in MySQL.
 

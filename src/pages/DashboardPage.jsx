@@ -11,6 +11,7 @@ import {
 } from 'lucide-react';
 
 import { useAuth, useToast } from '../context/AppContext.jsx';
+import ReviewDialog from '../components/ReviewDialog.jsx';
 import {
   confirmPurchaseCompletion,
   deleteListing,
@@ -29,8 +30,8 @@ const TABS = [
   'Sold',
 ];
 
-function isCompletedPurchase(order) {
-  return order.status === 'completed' && order.transactionType === 'purchase';
+function isCompleted(order) {
+  return order.status === 'completed';
 }
 
 function seenDealsStorageKey(userId) {
@@ -107,6 +108,7 @@ export default function DashboardPage() {
   const [updatingRequest, setUpdatingRequest] = useState(null);
   const [confirmingPurchase, setConfirmingPurchase] = useState(null);
   const [deletingListing, setDeletingListing] = useState(null);
+  const [reviewingOrder, setReviewingOrder] = useState(null);
 
   // Notification navigation and highlighting
   const [highlightedRequestId, setHighlightedRequestId] = useState(null);
@@ -207,8 +209,8 @@ export default function DashboardPage() {
       ? seenDeals.ids
       : new Set();
 
-  const receivedDeals = outgoing.filter(isCompletedPurchase);
-  const soldDeals = incoming.filter(isCompletedPurchase);
+  const receivedDeals = outgoing.filter(isCompleted);
+  const soldDeals = incoming.filter(isCompleted);
 
   const unreadReceivedCount = receivedDeals.filter(
     (order) => !seenDealIds.has(String(order.id))
@@ -321,6 +323,34 @@ export default function DashboardPage() {
   }
 
   // Purchase handover confirmation UI
+
+  async function confirmBorrowReturn(orderId) {
+    if (!window.confirm('Confirm that this borrowed item has been returned?')) return;
+    setUpdatingRequest(orderId);
+    try {
+      const updated = await updateRequestStatus(orderId, 'returned');
+      setIncoming((requests) => requests.map((request) => request.id === updated.id ? updated : request));
+      setOutgoing((requests) => requests.map((request) => request.id === updated.id ? updated : request));
+      addToast('The borrowed item has been marked returned.', 'success');
+    } catch (error) {
+      addToast(error.message || 'Unable to confirm this return.', 'error');
+    } finally {
+      setUpdatingRequest(null);
+    }
+  }
+
+  function markReviewed() {
+    const mark = (orders) => orders.map((order) => order.id !== reviewingOrder.id ? order : {
+      ...order,
+      ...(String(user.id) === String(order.requesterId)
+        ? { buyerReviewed: true }
+        : { sellerReviewed: true }),
+    });
+    setOutgoing(mark);
+    setIncoming(mark);
+    setReviewingOrder(null);
+  }
+
   function renderPurchaseConfirmation(order) {
     const viewerIsBuyer =
       String(user.id) === String(order.requesterId);
@@ -402,9 +432,11 @@ export default function DashboardPage() {
 
               <span className="request-row__meta">
                 {otherPartyLabel}{' '}
-                {String(order.requesterId) === String(user.id)
-                  ? order.sellerName
-                  : order.requesterName}
+                <Link to={`/users/${String(user.id) === String(order.requesterId) ? order.sellerId : order.requesterId}`}>
+                  {String(order.requesterId) === String(user.id)
+                    ? order.sellerName
+                    : order.requesterName}
+                </Link>
               </span>
 
               {order.price > 0 && (
@@ -413,8 +445,14 @@ export default function DashboardPage() {
                 </span>
               )}
             </div>
-
-            <StatusBadge status={order.status} />
+            <div className="completed-deal__actions">
+              <StatusBadge status={order.status} />
+              {(String(user.id) === String(order.requesterId) ? !order.buyerReviewed : !order.sellerReviewed) ? (
+                <button className="btn btn--outline-sm" onClick={() => setReviewingOrder(order)}>Write a review</button>
+              ) : (
+                <span className="review-submitted">Review submitted</span>
+              )}
+            </div>
           </div>
         ))}
       </div>
@@ -470,6 +508,7 @@ export default function DashboardPage() {
               <p className="dashboard-page__dept">
                 {user?.department} · {user?.year}
               </p>
+              <Link to={`/users/${user.id}`} className="dashboard-profile-link">View your profile</Link>
             </div>
           </div>
 
@@ -500,7 +539,6 @@ export default function DashboardPage() {
               }
             >
               {t}
-
               {t === 'Requests Received' &&
                 incoming.length > 0 && (
                   <span className="dashboard-tabs__badge">
@@ -734,7 +772,7 @@ export default function DashboardPage() {
                           : r.type === 'free'
                             ? 'Claim request'
                             : 'Purchase request'}
-                        {' · '}to {r.sellerName}
+                        {' · '}to <Link to={`/users/${r.sellerId}`}>{r.sellerName}</Link>
                       </span>
 
                       {r.returnDate && (
@@ -787,9 +825,9 @@ export default function DashboardPage() {
                     }`}
                   >
                     <div className="request-row__info">
-                      <span className="request-row__title">
+                      <Link to={`/users/${r.requesterId}`} className="request-row__title">
                         {r.requesterName}
-                      </span>
+                      </Link>
 
                       <span className="request-row__meta">
                         wants your <strong>{r.listingTitle}</strong>
@@ -806,6 +844,12 @@ export default function DashboardPage() {
                       {r.status === 'accepted' &&
                         r.transactionType === 'purchase' &&
                         renderPurchaseConfirmation(r)}
+                      {r.status === 'accepted' && r.transactionType === 'borrow' && (
+                        <button className="btn btn--dark btn--sm" disabled={updatingRequest === r.id}
+                          onClick={() => confirmBorrowReturn(r.id)}>
+                          {updatingRequest === r.id ? 'Saving…' : 'Confirm item returned'}
+                        </button>
+                      )}
                     </div>
 
                     <div className="request-row__actions">
@@ -848,8 +892,8 @@ export default function DashboardPage() {
           <div className="dashboard-section">
             {renderCompletedDeals(
               receivedDeals,
-              'No items received yet',
-              'Items you receive will appear here after both parties confirm the handover and payment.',
+              'No completed transactions yet',
+              'Transactions you complete with other students will appear here.',
               'From',
             )}
           </div>
@@ -860,15 +904,23 @@ export default function DashboardPage() {
           <div className="dashboard-section">
             {renderCompletedDeals(
               soldDeals,
-              'No items sold yet',
-              'Items you sell will appear here after both parties confirm the handover and payment.',
+              'No completed transactions yet',
+              'Transactions you complete with other students will appear here.',
               'To',
             )}
           </div>
         )}
 
       </div>
+      {reviewingOrder && (
+        <ReviewDialog
+          order={reviewingOrder}
+          otherParty={String(user.id) === String(reviewingOrder.requesterId)
+            ? reviewingOrder.sellerName : reviewingOrder.requesterName}
+          onClose={() => setReviewingOrder(null)}
+          onSubmitted={markReviewed}
+        />
+      )}
     </div>
   );
 }
-

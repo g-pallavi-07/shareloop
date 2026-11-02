@@ -129,6 +129,48 @@ export async function confirmPurchaseCompletion(requestId) {
   return order;
 }
 
+export async function submitReview(orderId, rating, comment) {
+  return request('/reviews', {
+    method: 'POST',
+    body: asJson({ order_id: Number(orderId), rating, comment }),
+  });
+}
+
+export async function getPublicUser(userId) {
+  return request(`/users/${encodeURIComponent(userId)}`);
+}
+
+export async function getUserReviews(userId) {
+  return request(`/users/${encodeURIComponent(userId)}/reviews`);
+}
+
+export async function submitReport(targetType, targetId, reason, details) {
+  const target = targetType === 'listing' ? { listing_id: Number(targetId) } : { reported_user_id: Number(targetId) };
+  return request('/reports', {
+    method: 'POST',
+    body: asJson({ ...target, reason, details }),
+  });
+}
+
+export async function getReports() {
+  const { reports } = await request('/reports');
+  return reports;
+}
+
+export async function updateReportStatus(reportId, status) {
+  return request(`/reports/${encodeURIComponent(reportId)}`, {
+    method: 'PATCH',
+    body: asJson({ status }),
+  });
+}
+
+export async function updateAccountStatus(userId, status) {
+  return request(`/admin/users/${encodeURIComponent(userId)}/status`, {
+    method: 'PATCH',
+    body: asJson({ status }),
+  });
+}
+
 export async function getCurrentUser() {
   const { user } = await request('/auth/me');
   return user;
