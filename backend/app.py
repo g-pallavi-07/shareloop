@@ -2,13 +2,13 @@ import logging
 import os
 import re
 import secrets
+import smtplib
+import ssl
 import uuid
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
+from email.mime.text import MIMEText
 from functools import wraps
 from pathlib import Path
-import smtplib
-from email.mime.text import MIMEText
-import random
 
 
 from dotenv import load_dotenv
@@ -33,6 +33,36 @@ SORT_COLUMNS = {
     "price-desc": "l.price DESC, l.created_at DESC",
 }
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def send_otp_email(target_email, otp):
+    smtp_server = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+    try:
+        smtp_port = int(os.getenv("MAIL_PORT", "587"))
+    except ValueError as exc:
+        raise ValueError("MAIL_PORT must be a valid port number.") from exc
+    sender_email = os.getenv("MAIL_USERNAME")
+    sender_password = os.getenv("MAIL_PASSWORD")
+
+    if not sender_email or not sender_password:
+        raise ValueError("SMTP credentials are missing from the server configuration.")
+
+    msg = MIMEText(
+        f"Welcome to ShareLoop!\n\n"
+        f"Your 6-digit campus verification code is: {otp}\n"
+        f"This code will expire in 5 minutes.\n\n"
+        f"If you did not request this code, please ignore this email."
+    )
+    msg["Subject"] = "[ShareLoop] Campus Email Verification Code"
+    msg["From"] = sender_email
+    msg["To"] = target_email
+
+    with smtplib.SMTP(smtp_server, smtp_port, timeout=20) as server:
+        server.ehlo()
+        server.starttls(context=ssl.create_default_context())
+        server.ehlo()
+        server.login(sender_email, sender_password)
+        server.send_message(msg)
 
 
 def create_app(test_config=None):
@@ -66,31 +96,6 @@ def create_app(test_config=None):
     def http_error(exc):
         return error(exc.description, exc.code)
 
-    def send_otp_email(target_email, otp):
-        smtp_server = "://gmail.com"
-        smtp_port = 587
-        sender_email = os.getenv("MAIL_USERNAME")
-        sender_password = os.getenv("MAIL_PASSWORD")
-        
-        if not sender_email or not sender_password:
-            raise ValueError("SMTP credentials missing from environment variables.")
-
-        msg = MIMEText(
-            f"Welcome to ShareLoop!\n\n"
-            f"Your 6-digit campus verification code is: {otp}\n"
-            f"This code will expire in 5 minutes.\n\n"
-            f"If you did not request this code, please ignore this email."
-        )
-        msg["Subject"] = "[ShareLoop] Campus Email Verification Code"
-        msg["From"] = sender_email
-        msg["To"] = target_email
-        
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls()
-            server.login(sender_email, sender_password)
-            server.sendmail(sender_email, target_email, msg.as_string())
-
-
     @app.errorhandler(Exception)
     def unexpected_error(exc):
         app.logger.exception("Unhandled application error: %s", exc)
@@ -119,8 +124,8 @@ def create_app(test_config=None):
                 return error("An account with this email already exists.", 409)
 
         # Generate a random 6-digit code and set it to expire in 5 minutes
-        otp = f"{random.randint(100000, 999999)}"
-        expires_at = datetime.utcnow() + timedelta(minutes=5)
+        otp = f"{secrets.randbelow(900000) + 100000}"
+        expires_at = datetime.now(timezone.utc).replace(tzinfo=None) + timedelta(minutes=5)
         
         db = get_db()
         try:
@@ -137,10 +142,10 @@ def create_app(test_config=None):
             send_otp_email(email, otp)
             return jsonify({"success": True, "message": "Verification code sent successfully."}), 200
             
-        except Exception as e:
+        except (smtplib.SMTPException, OSError, ValueError):
             db.rollback()
-            app.logger.error(f"OTP Flow Exception: {e}")
-            return error("Failed to send verification email. Please try again later.", 500)
+            app.logger.exception("Unable to send email verification code.")
+            return error("Email verification is not configured or could not be delivered. Please try again later.", 503)
 
     @app.post("/api/auth/register")
     def register():
@@ -172,7 +177,7 @@ def create_app(test_config=None):
         if not otp_record or otp_record["otp_code"] != otp_input:
             return error("Invalid verification code. Please check your inbox.", 400)
             
-        if datetime.utcnow() > otp_record["expires_at"]:
+        if datetime.now(timezone.utc).replace(tzinfo=None) > otp_record["expires_at"]:
             return error("Verification code has expired. Please request a new code.", 400)
 
         # Everything is valid! Proceed with creating the user account

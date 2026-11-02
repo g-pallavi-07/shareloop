@@ -1,6 +1,7 @@
 import unittest
+from unittest.mock import patch
 
-from backend.app import create_app, purchase_fully_confirmed, slug, validate_listing
+from backend.app import create_app, purchase_fully_confirmed, send_otp_email, slug, validate_listing
 
 
 class ApiTestCase(unittest.TestCase):
@@ -44,6 +45,111 @@ class ApiTestCase(unittest.TestCase):
             },
         )
         self.assertEqual(response.status_code, 400)
+
+    def test_send_otp_saves_and_sends_a_six_digit_code(self):
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, query, _params):
+                self.query = query
+
+            def fetchone(self):
+                return None
+
+        class Database:
+            def cursor(self):
+                return Cursor()
+
+            def commit(self):
+                pass
+
+            def rollback(self):
+                pass
+
+        with (
+            patch("backend.app.get_db", return_value=Database()),
+            patch("backend.app.send_otp_email") as send_email,
+        ):
+            response = self.client.post(
+                "/api/auth/send-otp",
+                json={"email": "student@nsut.ac.in"},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        code = send_email.call_args.args[1]
+        self.assertRegex(code, r"^\d{6}$")
+        self.assertEqual(send_email.call_args.args[0], "student@nsut.ac.in")
+
+    def test_send_otp_reports_missing_email_configuration(self):
+        class Cursor:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def execute(self, _query, _params):
+                pass
+
+            def fetchone(self):
+                return None
+
+        class Database:
+            def cursor(self):
+                return Cursor()
+
+            def commit(self):
+                pass
+
+            def rollback(self):
+                pass
+
+        with (
+            patch("backend.app.get_db", return_value=Database()),
+            patch("backend.app.send_otp_email", side_effect=ValueError("SMTP not configured")),
+        ):
+            response = self.client.post(
+                "/api/auth/send-otp",
+                json={"email": "student@nsut.ac.in"},
+            )
+
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("Email verification", response.get_json()["error"])
+
+    def test_otp_email_uses_configured_smtp_with_tls(self):
+        class SmtpServer:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            def ehlo(self):
+                pass
+
+            def starttls(self, context):
+                self.tls_context = context
+
+            def login(self, _username, _password):
+                pass
+
+            def send_message(self, message):
+                self.message = message
+
+        with (
+            patch.dict(
+                "os.environ",
+                {"MAIL_USERNAME": "sender@example.com", "MAIL_PASSWORD": "test-password"},
+            ),
+            patch("backend.app.smtplib.SMTP", return_value=SmtpServer()) as smtp,
+        ):
+            send_otp_email("student@nsut.ac.in", "123456")
+
+        smtp.assert_called_once_with("smtp.gmail.com", 587, timeout=20)
 
     def test_sort_parameter_is_whitelisted(self):
         response = self.client.get("/api/listings?sort=created_at%3BDROP%20TABLE%20Users")

@@ -42,6 +42,7 @@ Copy-Item .env.example .env
 ```
 
 Edit `backend\.env` and set a unique `SECRET_KEY`, MySQL connection settings, and the Vite frontend origin. Set `COLLEGE_EMAIL_DOMAINS` to a comma-separated list only if the campus requires particular email domains; leave it empty to accept any syntactically valid email address.
+Email verification requires `MAIL_USERNAME` and `MAIL_PASSWORD` on the backend. For Gmail, use the sender account's app password; `MAIL_SERVER` and `MAIL_PORT` default to `smtp.gmail.com` and `587`. On Render, add these as service environment variables, never frontend variables. For an existing database, run `database\migrations\002_email_otps.sql` once.
 
 Start the backend from the `backend` directory:
 
