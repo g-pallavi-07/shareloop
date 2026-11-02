@@ -676,7 +676,7 @@ def create_app(test_config=None):
     @app.patch("/api/orders/<int:order_id>/<action>")
     @authenticated
     def change_order(order_id, action):
-        if action not in {"accept", "reject", "cancel", "complete", "confirm", "return"}:
+        if action not in {"accept", "reject", "cancel", "complete", "confirm", "return", "return-received"}:
             return error("Unknown order action.", 404)
         db = get_db()
         pending_emails = []
@@ -695,8 +695,12 @@ def create_app(test_config=None):
                     return error("Only the seller can respond to this request.", 403)
                 if action in {"cancel"} and order["buyer_id"] != g.user["user_id"]:
                     return error("Only the buyer can cancel this request.", 403)
-                if action in {"complete", "confirm", "return"} and g.user["user_id"] not in {order["buyer_id"], order["seller_id"]}:
+                if action in {"complete", "confirm", "return", "return-received"} and g.user["user_id"] not in {order["buyer_id"], order["seller_id"]}:
                     return error("You are not a participant in this transaction.", 403)
+                if action == "return" and order["buyer_id"] != g.user["user_id"]:
+                    return error("Only the borrower can confirm that they returned the item and paid.", 403)
+                if action == "return-received" and order["seller_id"] != g.user["user_id"]:
+                    return error("Only the seller can confirm receipt of the returned item and payment.", 403)
                 if action == "accept":
                     if order["status"] != "pending":
                         return error("Only pending requests can be accepted.", 409)
@@ -794,18 +798,48 @@ def create_app(test_config=None):
                                 pending_emails.append(email_data)
                 elif action == "return":
                     if order["transaction_type"] != "borrow" or order["status"] != "accepted":
-                        return error("Only accepted borrow transactions can be returned.", 409)
-                    cursor.execute("UPDATE Orders SET status='completed', actual_return_date=%s, completed_at=CURRENT_TIMESTAMP WHERE order_id=%s", (date.today(), order_id))
-                    cursor.execute("UPDATE Listings SET quantity=quantity+%s, status='available', updated_at=CURRENT_TIMESTAMP WHERE listing_id=%s", (order["quantity"], order["listing_id"]))
-                    email_data = create_notification(
-                        cursor,
-                        order["seller_id"],
-                        order_id,
-                        "borrow_returned",
-                        "A borrowed item has been marked returned.",
-                    )
-                    if email_data:
-                        pending_emails.append(email_data)
+                        return error("Only active borrow transactions can be returned.", 409)
+                    if order["borrower_return_confirmed_at"] is None:
+                        cursor.execute(
+                            "UPDATE Orders SET borrower_return_confirmed_at=CURRENT_TIMESTAMP,"
+                            "actual_return_date=%s WHERE order_id=%s",
+                            (date.today(), order_id),
+                        )
+                        email_data = create_notification(
+                            cursor,
+                            order["seller_id"],
+                            order_id,
+                            "borrower_return_confirmed",
+                            "The borrower confirmed returning the item and making any agreed payment.",
+                        )
+                        if email_data:
+                            pending_emails.append(email_data)
+                elif action == "return-received":
+                    if order["transaction_type"] != "borrow" or order["status"] != "accepted":
+                        return error("Only active borrow transactions can be confirmed as returned.", 409)
+                    if order["borrower_return_confirmed_at"] is None:
+                        return error("The borrower must first confirm the return and any agreed payment.", 409)
+                    if order["seller_return_payment_confirmed_at"] is None:
+                        cursor.execute(
+                            "UPDATE Orders SET seller_return_payment_confirmed_at=CURRENT_TIMESTAMP,"
+                            "status='completed',completed_at=CURRENT_TIMESTAMP WHERE order_id=%s",
+                            (order_id,),
+                        )
+                        cursor.execute(
+                            "UPDATE Listings SET quantity=quantity+%s,status='available',"
+                            "updated_at=CURRENT_TIMESTAMP WHERE listing_id=%s",
+                            (order["quantity"], order["listing_id"]),
+                        )
+                        for participant_id in (order["buyer_id"], order["seller_id"]):
+                            email_data = create_notification(
+                                cursor,
+                                participant_id,
+                                order_id,
+                                "borrow_return_completed",
+                                "The returned item and any agreed payment were confirmed by both participants.",
+                            )
+                            if email_data:
+                                pending_emails.append(email_data)
             db.commit()
         except Exception:
             db.rollback()
@@ -1317,6 +1351,7 @@ def order_select():
         "o.expected_return_date,o.actual_return_date,o.buyer_note,o.completed_at,"
         "o.buyer_handover_confirmed_at,o.seller_handover_confirmed_at,"
         "o.buyer_payment_confirmed_at,o.seller_payment_confirmed_at,"
+        "o.borrower_return_confirmed_at,o.seller_return_payment_confirmed_at,"
         "EXISTS (SELECT 1 FROM Reviews r WHERE r.order_id=o.order_id AND r.reviewer_id=o.buyer_id) AS buyer_reviewed,"
         "EXISTS (SELECT 1 FROM Reviews r WHERE r.order_id=o.order_id AND r.reviewer_id=o.seller_id) AS seller_reviewed,"
         "oi.listing_id,oi.quantity,oi.unit_price,l.title AS listing_title,l.listing_type,"
@@ -1347,6 +1382,8 @@ def order_payload(row):
         "sellerHandoverConfirmed": row["seller_handover_confirmed_at"] is not None,
         "buyerPaymentConfirmed": not payment_required or row["buyer_payment_confirmed_at"] is not None,
         "sellerPaymentConfirmed": not payment_required or row["seller_payment_confirmed_at"] is not None,
+        "borrowerReturnConfirmed": row["borrower_return_confirmed_at"] is not None,
+        "sellerReturnPaymentConfirmed": row["seller_return_payment_confirmed_at"] is not None,
         "buyerReviewed": bool(row["buyer_reviewed"]),
         "sellerReviewed": bool(row["seller_reviewed"]),
         "paymentRequired": payment_required,

@@ -1425,6 +1425,9 @@ ul { list-style: none; }
 .request-row__meta { font-size: 0.78rem; color: var(--text-secondary); }
 .request-row__sub { font-size: 0.73rem; color: var(--text-muted); }
 .request-row__return { font-size: 0.73rem; color: var(--olive); font-weight: 500; }
+.request-row__return--upcoming { color: #26734d; }
+.request-row__return--overdue { color: #c0392b; }
+.request-row__return--returned { color: #26734d; }
 .request-row__message { font-size: 0.78rem; color: var(--text-muted); font-style: italic; border-left: 2px solid var(--border); padding-left: 10px; margin-top: 4px; }
 .request-row__actions { display: flex; gap: 8px; flex-shrink: 0; }
 .request-confirmation {

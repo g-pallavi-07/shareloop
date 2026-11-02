@@ -107,6 +107,8 @@ CREATE TABLE IF NOT EXISTS Orders (
   seller_handover_confirmed_at TIMESTAMP NULL,
   buyer_payment_confirmed_at TIMESTAMP NULL,
   seller_payment_confirmed_at TIMESTAMP NULL,
+  borrower_return_confirmed_at TIMESTAMP NULL,
+  seller_return_payment_confirmed_at TIMESTAMP NULL,
   completed_at TIMESTAMP NULL,
   PRIMARY KEY (order_id),
   CONSTRAINT fk_orders_buyer FOREIGN KEY (buyer_id) REFERENCES Users(user_id),

@@ -94,6 +94,58 @@ class FakeDatabase:
         self.rollbacks += 1
 
 
+class BorrowReturnCursor:
+    def __init__(self, database):
+        self.database = database
+        self.result = None
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def execute(self, query, params=()):
+        if query.startswith("SELECT o.*, oi.listing_id"):
+            self.result = self.database.order
+        elif query.startswith("UPDATE Orders SET borrower_return_confirmed_at"):
+            self.database.order["borrower_return_confirmed_at"] = datetime.now()
+            self.database.order["actual_return_date"] = params[0]
+        elif query.startswith("UPDATE Orders SET seller_return_payment_confirmed_at"):
+            self.database.order["seller_return_payment_confirmed_at"] = datetime.now()
+            self.database.order["status"] = "completed"
+        elif query.startswith("UPDATE Listings SET quantity=quantity+"):
+            self.database.restored_quantity += params[0]
+
+    def fetchone(self):
+        return self.result
+
+
+class BorrowReturnDatabase:
+    def __init__(self):
+        self.order = {
+            "order_id": 7,
+            "buyer_id": 1,
+            "seller_id": 2,
+            "transaction_type": "borrow",
+            "status": "accepted",
+            "listing_id": 12,
+            "quantity": 1,
+            "borrower_return_confirmed_at": None,
+            "seller_return_payment_confirmed_at": None,
+        }
+        self.restored_quantity = 0
+
+    def cursor(self):
+        return BorrowReturnCursor(self)
+
+    def commit(self):
+        pass
+
+    def rollback(self):
+        pass
+
+
 class ApiTestCase(unittest.TestCase):
     def setUp(self):
         self.app = create_app({"TESTING": True, "SECRET_KEY": "test-secret"})
@@ -130,6 +182,41 @@ class ApiTestCase(unittest.TestCase):
     def test_purchase_confirmation_rejects_anonymous_users(self):
         response = self.client.patch("/api/orders/1/confirm")
         self.assertEqual(response.status_code, 401)
+
+    def test_borrow_return_requires_borrower_then_seller_confirmation(self):
+        database = BorrowReturnDatabase()
+
+        with (
+            self.authenticate(user_id=2),
+            patch("backend.app.get_db", return_value=database),
+            patch("backend.app.create_notification", return_value=None),
+            patch("backend.app.get_order", side_effect=lambda *_: {"status": database.order["status"]}),
+        ):
+            early_seller_confirmation = self.client.patch("/api/orders/7/return-received")
+            self.assertEqual(early_seller_confirmation.status_code, 409)
+
+        with (
+            self.authenticate(user_id=1),
+            patch("backend.app.get_db", return_value=database),
+            patch("backend.app.create_notification", return_value=None),
+            patch("backend.app.get_order", side_effect=lambda *_: {"status": database.order["status"]}),
+        ):
+            borrower_confirmation = self.client.patch("/api/orders/7/return")
+            self.assertEqual(borrower_confirmation.status_code, 200)
+            self.assertEqual(database.order["status"], "accepted")
+            self.assertEqual(database.restored_quantity, 0)
+
+        with (
+            self.authenticate(user_id=2),
+            patch("backend.app.get_db", return_value=database),
+            patch("backend.app.create_notification", return_value=None),
+            patch("backend.app.get_order", side_effect=lambda *_: {"status": database.order["status"]}),
+        ):
+            seller_confirmation = self.client.patch("/api/orders/7/return-received")
+            self.assertEqual(seller_confirmation.status_code, 200)
+
+        self.assertEqual(database.order["status"], "completed")
+        self.assertEqual(database.restored_quantity, 1)
 
     def test_reviews_and_reports_reject_anonymous_users(self):
         self.assertEqual(self.client.post("/api/reviews", json={}).status_code, 401)
@@ -271,17 +358,20 @@ class ApiTestCase(unittest.TestCase):
 
         with (
             patch("backend.app.get_db", return_value=Database()),
-            patch("backend.app.send_otp_email") as send_email,
+            patch.dict("os.environ", {"OTP_MAILER_URL": "https://mailer.example", "OTP_MAILER_SECRET": "test-secret"}),
+            patch("backend.app.requests.post") as send_email,
         ):
+            send_email.return_value.raise_for_status.return_value = None
+            send_email.return_value.json.return_value = {"ok": True}
             response = self.client.post(
                 "/api/auth/send-otp",
                 json={"email": "student@nsut.ac.in"},
             )
 
         self.assertEqual(response.status_code, 200)
-        code = send_email.call_args.args[1]
+        code = send_email.call_args.kwargs["json"]["otp"]
         self.assertRegex(code, r"^\d{6}$")
-        self.assertEqual(send_email.call_args.args[0], "student@nsut.ac.in")
+        self.assertEqual(send_email.call_args.args[0], "https://mailer.example")
 
     def test_send_otp_reports_missing_email_configuration(self):
         class Cursor:
@@ -309,46 +399,15 @@ class ApiTestCase(unittest.TestCase):
 
         with (
             patch("backend.app.get_db", return_value=Database()),
-            patch("backend.app.send_otp_email", side_effect=ValueError("SMTP not configured")),
+            patch.dict("os.environ", {"OTP_MAILER_URL": "", "OTP_MAILER_SECRET": ""}),
         ):
             response = self.client.post(
                 "/api/auth/send-otp",
                 json={"email": "student@nsut.ac.in"},
             )
 
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("Email verification", response.get_json()["error"])
-
-    def test_otp_email_uses_configured_smtp_with_tls(self):
-        class SmtpServer:
-            def __enter__(self):
-                return self
-
-            def __exit__(self, *_args):
-                return False
-
-            def ehlo(self):
-                pass
-
-            def starttls(self, context):
-                self.tls_context = context
-
-            def login(self, _username, _password):
-                pass
-
-            def send_message(self, message):
-                self.message = message
-
-        with (
-            patch.dict(
-                "os.environ",
-                {"MAIL_USERNAME": "sender@example.com", "MAIL_PASSWORD": "test-password"},
-            ),
-            patch("backend.app.smtplib.SMTP", return_value=SmtpServer()) as smtp,
-        ):
-            send_otp_email("student@nsut.ac.in", "123456")
-
-        smtp.assert_called_once_with("smtp.gmail.com", 587, timeout=20)
+        self.assertEqual(response.status_code, 500)
+        self.assertIn("verification email", response.get_json()["error"])
 
     def test_sort_parameter_is_whitelisted(self):
         response = self.client.get("/api/listings?sort=created_at%3BDROP%20TABLE%20Users")

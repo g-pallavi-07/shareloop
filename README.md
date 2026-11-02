@@ -12,7 +12,7 @@ ShareLoop is a campus marketplace for students to buy, borrow, give away, and re
 
 1. Start MySQL Server and connect with an account allowed to create databases/users.
 2. Open and execute `database\schema.sql` in MySQL Workbench.
-   For an existing database, execute `database\migrations\001_purchase_confirmations.sql` once instead.
+   For an existing database, run the migration scripts in `database\migrations` once each.
 3. Execute `database\sample_data.sql`, `database\views.sql`, and optionally `database\queries.sql`.
 4. Create a least-privileged application account after the database exists, using a unique password:
    ```sql
@@ -92,7 +92,7 @@ The browser uses an HTTP-only, signed Flask session cookie rather than putting a
 | POST/DELETE | `/api/favorites/<listing_id>` | Add or remove a favorite |
 | POST | `/api/orders` | Request a purchase, free item, or borrow |
 | GET | `/api/orders`, `/incoming`, `/outgoing` | Participant-scoped order lists |
-| PATCH | `/api/orders/<id>/<accept\|reject\|cancel\|confirm\|return>` | Apply a permitted transaction transition; purchase confirmation requires both participants |
+| PATCH | `/api/orders/<id>/<accept\|reject\|cancel\|confirm\|return\|return-received>` | Apply a permitted transaction transition; purchases and borrow returns require both participants |
 | POST | `/api/reviews` | Review a completed transaction (participant-only; one per reviewer/order) |
 | POST | `/api/reports` | Report one listing or user |
 | GET | `/api/reports` | Admin-only report queue |
@@ -106,7 +106,7 @@ Listing search parameters include `q`, `category`, `type`, `minPrice`, `maxPrice
 
 ## Transaction policy
 
-Pending requests do not reserve inventory. The seller's acceptance endpoint locks the listing row and checks inventory in a database transaction before decrementing stock, so concurrently accepted requests cannot oversell it. After a purchase is accepted, the buyer and seller must each confirm that the handover (and payment, for paid items) is complete. Only then does the order become completed and appear under the buyer's Received and seller's Sold dashboard sections. Borrowed inventory is returned with the separate `return` action, which records the actual return date and restores quantity. Borrow requests must include a future expected return date.
+Pending requests do not reserve inventory. The seller's acceptance endpoint locks the listing row and checks inventory in a database transaction before decrementing stock, so concurrently accepted requests cannot oversell it. After a purchase is accepted, the buyer and seller must each confirm that the handover (and payment, for paid items) is complete. Only then does the order become completed and appear under the buyer's Received and seller's Sold dashboard sections. For a borrow, the borrower first confirms the item was returned and any agreed payment was made; the seller then confirms they received the item and any agreed payment. Inventory is restored only after both confirmations. The Borrowed dashboard section shows the due date in green before it passes and red after it passes while the item remains out. Borrow requests must include a future expected return date. Payment confirmations record participant acknowledgments only; the app does not process payments.
 
 After an order is completed, either participant can submit one 1–5 star review for the other participant from the dashboard's Received/Sold transaction lists. Public profiles display each review and a database-calculated average. Listing cards/detail views and public profiles provide report forms. Administrators can use **Admin Reports** in the navigation to update report status, remove a reported listing, or suspend/reactivate a reported account; the API independently checks the administrator role.
 
