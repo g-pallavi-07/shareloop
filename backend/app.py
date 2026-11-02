@@ -81,9 +81,9 @@ def create_app(test_config=None):
         return error(exc.description, exc.code)
 
     def send_otp_email(target_email, otp):
-        # Read the clean variables straight from your Render Environment panel dashboard
-        smtp_server = os.getenv("MAIL_SERVER", "smtp.gmail.com")
-        smtp_port = int(os.getenv("MAIL_PORT", 587))
+        # Explicitly target secure SSL configurations to bypass cloud port blocks
+        smtp_server = "://gmail.com"
+        smtp_port = 465  # 💡 Port 465 is the dedicated secure SSL port for Gmail
         sender_email = os.getenv("MAIL_USERNAME")
         sender_password = os.getenv("MAIL_PASSWORD")
         
@@ -100,8 +100,8 @@ def create_app(test_config=None):
         msg["From"] = sender_email
         msg["To"] = target_email
         
-        with smtplib.SMTP(smtp_server, smtp_port) as server:
-            server.starttls()
+        # 💡 Use SMTP_SSL instead of standard SMTP to establish immediate encryption
+        with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
             server.login(sender_email, sender_password)
             server.sendmail(sender_email, target_email, msg.as_string())
 
