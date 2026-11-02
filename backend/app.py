@@ -3,7 +3,7 @@ import os
 import re
 import secrets
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from functools import wraps
 from pathlib import Path
 import smtplib
@@ -110,6 +110,10 @@ def create_app(test_config=None):
 
     @app.post("/api/auth/send-otp")
     def send_otp():
+
+        if request.method == 'OPTIONS':
+            return jsonify({"success": True}), 200
+        
         data = body()
         email = clean_text(data.get("college_email") or data.get("email"), 190).lower()
         
@@ -128,7 +132,7 @@ def create_app(test_config=None):
 
         # Generate a random 6-digit code and set it to expire in 5 minutes
         otp = f"{random.randint(100000, 999999)}"
-        expires_at = datetime.utcnow() + timedelta(minutes=5)
+        expires_at = datetime.now(timezone.utc) + timedelta(minutes=5)
         
         db = get_db()
         try:
@@ -180,7 +184,7 @@ def create_app(test_config=None):
         if not otp_record or otp_record["otp_code"] != otp_input:
             return error("Invalid verification code. Please check your inbox.", 400)
             
-        if datetime.utcnow() > otp_record["expires_at"]:
+        if datetime.now(timezone.utc) > otp_record["expires_at"]:
             return error("Verification code has expired. Please request a new code.", 400)
 
         # Everything is valid! Proceed with creating the user account
