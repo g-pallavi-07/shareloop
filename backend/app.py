@@ -81,14 +81,15 @@ def create_app(test_config=None):
         return error(exc.description, exc.code)
 
     def send_otp_email(target_email, otp):
-        # Explicitly target secure SSL configurations to bypass cloud port blocks
-        smtp_server = "://gmail.com"
-        smtp_port = 465  # 💡 Port 465 is the dedicated secure SSL port for Gmail
+        # 💡 Hardcoding these directly guarantees Render won't fetch empty environment configurations
+        smtp_server = "smtp.gmail.com"
+        smtp_port = 465
+        
         sender_email = os.getenv("MAIL_USERNAME")
         sender_password = os.getenv("MAIL_PASSWORD")
         
         if not sender_email or not sender_password:
-            raise ValueError("SMTP credentials missing from environment variables.")
+            raise ValueError("SMTP credentials (MAIL_USERNAME/MAIL_PASSWORD) missing from your environment variables panel.")
 
         msg = MIMEText(
             f"Welcome to ShareLoop!\n\n"
@@ -100,7 +101,7 @@ def create_app(test_config=None):
         msg["From"] = sender_email
         msg["To"] = target_email
         
-        # 💡 Use SMTP_SSL instead of standard SMTP to establish immediate encryption
+        # Immediate secure SSL connection socket handling
         with smtplib.SMTP_SSL(smtp_server, smtp_port) as server:
             server.login(sender_email, sender_password)
             server.sendmail(sender_email, target_email, msg.as_string())
