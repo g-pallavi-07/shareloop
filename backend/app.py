@@ -99,6 +99,41 @@ def create_app(test_config=None):
             timeout=25
         )
 
+        
+    def send_notification_email(email, message):
+        mailer_url = os.getenv("OTP_MAILER_URL")
+        mailer_secret = os.getenv("OTP_MAILER_SECRET")
+
+        if not mailer_url or not mailer_secret:
+            print("Notification email skipped: mailer environment variables missing.")
+            return
+
+        try:
+            response = requests.post(
+                mailer_url,
+                json={
+                    "secret": mailer_secret,
+                    "email": email,
+                    "subject": "ShareLoop - New Notification",
+                    "message": (
+                        "You have a new notification on ShareLoop.\n\n"
+                        + message
+                        + "\n\nLog in to ShareLoop to view your activity."
+                    ),
+                },
+                timeout=15,
+            )
+
+            response.raise_for_status()
+            result = response.json()
+
+            if not result.get("ok"):
+                print("Notification email failed:", result.get("error"))
+
+        except Exception as e:
+            print("Notification email failed:", str(e))
+
+
         response.raise_for_status()
 
         result = response.json()
@@ -566,6 +601,7 @@ def create_app(test_config=None):
         except (TypeError, ValueError):
             return error("A valid listing_id is required.")
         db = get_db()
+        pending_emails = []
         try:
             with db.cursor() as cursor:
                 cursor.execute(
@@ -592,11 +628,26 @@ def create_app(test_config=None):
                     "INSERT INTO OrderItems (order_id,listing_id,quantity,unit_price) VALUES (%s,%s,1,%s)",
                     (order_id, listing_id, listing["price"] or 0),
                 )
-                create_notification(cursor, listing["seller_id"], order_id, "request_received", "You received a new listing request.")
+                email_data = create_notification(
+                    cursor,
+                    listing["seller_id"],
+                    order_id,
+                    "request_received",
+                    "You received a new listing request.",
+                )
+
+                if email_data:
+                    pending_emails.append(email_data)
+                    
             db.commit()
         except Exception:
             db.rollback()
             raise
+        for email_data in pending_emails:
+            send_notification_email(
+                email_data["email"],
+                email_data["message"],
+            )
         return jsonify({"order": get_order(order_id, g.user["user_id"])}), 201
 
     @app.get("/api/orders")
@@ -626,6 +677,7 @@ def create_app(test_config=None):
         if action not in {"accept", "reject", "cancel", "complete", "confirm", "return"}:
             return error("Unknown order action.", 404)
         db = get_db()
+        pending_emails = []
         try:
             with db.cursor() as cursor:
                 cursor.execute(
@@ -653,12 +705,28 @@ def create_app(test_config=None):
                     cursor.execute("UPDATE Listings SET quantity=quantity-%s, updated_at=CURRENT_TIMESTAMP WHERE listing_id=%s", (order["quantity"], order["listing_id"]))
                     cursor.execute("UPDATE Listings SET status=IF(quantity=0,'unavailable','available') WHERE listing_id=%s", (order["listing_id"],))
                     cursor.execute("UPDATE Orders SET status='accepted' WHERE order_id=%s", (order_id,))
-                    create_notification(cursor, order["buyer_id"], order_id, "request_accepted", "Your request was accepted.")
+                    email_data = create_notification(
+                        cursor,
+                        order["buyer_id"],
+                        order_id,
+                        "request_accepted",
+                        "Your request was accepted.",
+                    )
+                    if email_data:
+                        pending_emails.append(email_data)
                 elif action == "reject":
                     if order["status"] != "pending":
                         return error("Only pending requests can be rejected.", 409)
                     cursor.execute("UPDATE Orders SET status='rejected' WHERE order_id=%s", (order_id,))
-                    create_notification(cursor, order["buyer_id"], order_id, "request_rejected", "Your request was declined.")
+                    email_data = create_notification(
+                        cursor,
+                        order["buyer_id"],
+                        order_id,
+                        "request_rejected",
+                        "Your request was declined.",
+                    )
+                    if email_data:
+                        pending_emails.append(email_data)
                 elif action == "cancel":
                     if order["status"] != "pending":
                         return error("Only pending requests can be cancelled.", 409)
@@ -689,7 +757,7 @@ def create_app(test_config=None):
                         if order[handover_field] is None:
                             other_user_id = order["seller_id"] if is_buyer else order["buyer_id"]
                             role = "buyer" if is_buyer else "seller"
-                            create_notification(
+                            email_data = create_notification(
                                 cursor,
                                 other_user_id,
                                 order_id,
@@ -697,35 +765,54 @@ def create_app(test_config=None):
                                 f"The {role} confirmed the item handover"
                                 + (" and payment." if payment_required else "."),
                             )
+                            if email_data:
+                                pending_emails.append(email_data)
                         if purchase_fully_confirmed(order, payment_required, user_id):
                             cursor.execute(
                                 "UPDATE Orders SET status='completed',completed_at=CURRENT_TIMESTAMP WHERE order_id=%s",
                                 (order_id,),
                             )
-                            create_notification(
+                            email_data = create_notification(
                                 cursor,
                                 order["buyer_id"],
                                 order_id,
                                 "purchase_completed",
                                 "Both participants confirmed the purchase. It is now complete.",
                             )
-                            create_notification(
+                            if email_data:
+                                pending_emails.append(email_data)
+                            email_data = create_notification(
                                 cursor,
                                 order["seller_id"],
                                 order_id,
                                 "purchase_completed",
                                 "Both participants confirmed the purchase. It is now complete.",
                             )
+                            if email_data:
+                                pending_emails.append(email_data)
                 elif action == "return":
                     if order["transaction_type"] != "borrow" or order["status"] != "accepted":
                         return error("Only accepted borrow transactions can be returned.", 409)
                     cursor.execute("UPDATE Orders SET status='completed', actual_return_date=%s, completed_at=CURRENT_TIMESTAMP WHERE order_id=%s", (date.today(), order_id))
                     cursor.execute("UPDATE Listings SET quantity=quantity+%s, status='available', updated_at=CURRENT_TIMESTAMP WHERE listing_id=%s", (order["quantity"], order["listing_id"]))
-                    create_notification(cursor, order["seller_id"], order_id, "borrow_returned", "A borrowed item has been marked returned.")
+                    email_data = create_notification(
+                        cursor,
+                        order["seller_id"],
+                        order_id,
+                        "borrow_returned",
+                        "A borrowed item has been marked returned.",
+                    )
+                    if email_data:
+                        pending_emails.append(email_data)
             db.commit()
         except Exception:
             db.rollback()
             raise
+        for email_data in pending_emails:
+            send_notification_email(
+                email_data["email"],
+                email_data["message"],
+            )
         return jsonify({"order": get_order(order_id, g.user["user_id"])})
 
     @app.post("/api/reviews")
@@ -1199,11 +1286,27 @@ def parse_date(value):
         return None
 
 
+
 def create_notification(cursor, user_id, order_id, kind, message):
     cursor.execute(
         "INSERT INTO Notifications (user_id,order_id,notification_type,message) VALUES (%s,%s,%s,%s)",
         (user_id, order_id, kind, message),
     )
+
+    cursor.execute(
+        "SELECT college_email FROM Users WHERE user_id=%s",
+        (user_id,),
+    )
+    user = cursor.fetchone()
+
+    if not user or not user.get("college_email"):
+        return None
+
+    return {
+        "email": user["college_email"],
+        "message": message,
+    }
+
 
 
 def order_select():
