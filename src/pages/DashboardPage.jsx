@@ -29,7 +29,8 @@ const TABS = [
   'Requests Sent',
   'Requests Received',
   'Borrowed',
-  'Received',
+  'Lent',
+  'Bought',
   'Sold',
 ];
 
@@ -228,11 +229,15 @@ export default function DashboardPage() {
     (order) => order.transactionType === 'borrow' &&
       ['accepted', 'completed'].includes(order.status)
   );
+  const lentOrders = incoming.filter(
+    (order) => order.transactionType === 'borrow' &&
+      ['accepted', 'completed'].includes(order.status)
+  );
   const pendingIncomingCount = incoming.filter(
     (request) => request.status === 'pending'
   ).length;
 
-  const unreadReceivedCount = receivedDeals.filter(
+  const unreadBoughtCount = receivedDeals.filter(
     (order) => !seenDealIds.has(String(order.id))
   ).length;
 
@@ -242,7 +247,7 @@ export default function DashboardPage() {
 
   if (!isLoggedIn) return null;
 
-  // Mark Received/Sold deals as seen
+  // Mark Bought/Sold deals as seen
   function openDealsTab(section) {
     const ids =
       seenDeals.userId === userId
@@ -250,7 +255,7 @@ export default function DashboardPage() {
         : readSeenDealIds(userId);
 
     const orders =
-      section === 'Received' ? receivedDeals : soldDeals;
+      section === 'Bought' ? receivedDeals : soldDeals;
 
     const nextIds = new Set(ids);
 
@@ -613,7 +618,7 @@ export default function DashboardPage() {
                   : ''
               }`}
               onClick={() =>
-                t === 'Received' || t === 'Sold'
+                t === 'Bought' || t === 'Sold'
                   ? openDealsTab(t)
                   : setTab(t)
               }
@@ -626,10 +631,10 @@ export default function DashboardPage() {
                   </span>
                 )}
 
-              {t === 'Received' &&
-                unreadReceivedCount > 0 && (
+              {t === 'Bought' &&
+                unreadBoughtCount > 0 && (
                   <span className="dashboard-tabs__badge">
-                    {unreadReceivedCount}
+                    {unreadBoughtCount}
                   </span>
                 )}
 
@@ -651,7 +656,7 @@ export default function DashboardPage() {
                   {listings.length}
                 </span>
                 <span className="stat-card__label">
-                  Active Listings
+                  Total Listings
                 </span>
               </div>
 
@@ -1011,8 +1016,52 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Received Purchases */}
-        {tab === 'Received' && (
+        {/* Lent items */}
+        {tab === 'Lent' && (
+          <div className="dashboard-section">
+            {lentOrders.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-state__icon">🤝</div>
+                <h3 className="empty-state__heading">No lent items</h3>
+                <p className="empty-state__body">
+                  Items you lend will appear here until the borrower and you confirm the return.
+                </p>
+              </div>
+            ) : (
+              <div className="dashboard-requests">
+                {lentOrders.map((order) => {
+                  const dueStatus = getBorrowDueStatus(order);
+                  return (
+                    <div key={order.id} className="request-row">
+                      <div className="request-row__info">
+                        <Link to={`/listing/${order.listingId}`} className="request-row__title">
+                          {order.listingTitle}
+                        </Link>
+                        <span className="request-row__meta">
+                          Lent to <Link to={`/users/${order.requesterId}`}>{order.requesterName}</Link>
+                        </span>
+                        <span className={`request-row__return request-row__return--${dueStatus}`}>
+                          {order.status === 'completed'
+                            ? `Returned on: ${order.actualReturnDate}`
+                            : dueStatus === 'returned'
+                              ? `Return reported · due date: ${order.expectedReturnDate}`
+                              : dueStatus === 'overdue'
+                                ? `Overdue · return by: ${order.expectedReturnDate}`
+                                : `Return by: ${order.expectedReturnDate}`}
+                        </span>
+                        {order.status === 'accepted' && renderBorrowReturnConfirmation(order, false)}
+                      </div>
+                      <StatusBadge status={order.status} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Bought purchases */}
+        {tab === 'Bought' && (
           <div className="dashboard-section">
             {renderCompletedDeals(
               receivedDeals,
