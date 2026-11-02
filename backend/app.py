@@ -193,7 +193,15 @@ def create_app(test_config=None):
         if not otp_record or otp_record["otp_code"] != otp_input:
             return error("Invalid verification code. Please check your inbox.", 400)
             
-        if datetime.now(timezone.utc) > otp_record["expires_at"]:
+        
+        expires_at = otp_record["expires_at"]
+
+        # MySQL DATETIME values are often returned without timezone information.
+        # Our stored OTP expiry timestamps represent UTC, so attach UTC.
+        if expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        if datetime.now(timezone.utc) > expires_at:
             return error("Verification code has expired. Please request a new code.", 400)
 
         # Everything is valid! Proceed with creating the user account
