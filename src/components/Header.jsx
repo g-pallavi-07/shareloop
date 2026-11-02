@@ -211,6 +211,15 @@ export default function Header() {
               Dashboard
             </Link>
           )}
+          {isLoggedIn && user?.role === 'admin' && (
+            <Link
+              to="/admin/reports"
+              className="header__nav-link"
+              onClick={() => setMenuOpen(false)}
+            >
+              Admin Reports
+            </Link>
+          )}
 
           {!isLoggedIn && (
             <>

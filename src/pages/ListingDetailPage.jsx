@@ -1,8 +1,9 @@
 import { useState, useEffect } from 'react';
-import { useParams, useNavigate } from 'react-router-dom';
-import { Heart, ArrowLeft, ArrowRight, ShieldCheck } from 'lucide-react';
+import { Link, useParams, useNavigate } from 'react-router-dom';
+import { Heart, ArrowLeft, ArrowRight, Flag, ShieldCheck } from 'lucide-react';
 import { getListingById, createRequest } from '../services/api.js';
-import { useFavorites, useToast } from '../context/AppContext.jsx';
+import { useAuth, useFavorites, useToast } from '../context/AppContext.jsx';
+import ReportDialog from '../components/ReportDialog.jsx';
 
 const MIN_RETURN_DATE = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
 
@@ -16,6 +17,7 @@ export default function ListingDetailPage() {
   const { id } = useParams();
   const navigate = useNavigate();
   const { toggle, isFavorite } = useFavorites();
+  const { user, isLoggedIn } = useAuth();
   const { addToast } = useToast();
 
   const [listing, setListing] = useState(null);
@@ -27,6 +29,7 @@ export default function ListingDetailPage() {
   const [message, setMessage] = useState('');
   const [expectedReturnDate, setExpectedReturnDate] = useState('');
   const [showDialog, setShowDialog] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -131,7 +134,7 @@ export default function ListingDetailPage() {
             <p className="detail-page__description">{listing.description}</p>
 
             {/* Seller card */}
-            <div className="detail-page__seller">
+            <Link to={`/users/${listing.seller.id}`} className="detail-page__seller">
               <div className="detail-page__seller-avatar">
                 {listing.seller.name.charAt(0)}
               </div>
@@ -139,7 +142,14 @@ export default function ListingDetailPage() {
                 <span className="detail-page__seller-name">{listing.seller.name}</span>
                 <span className="detail-page__seller-dept">{listing.seller.department} · {listing.seller.year}</span>
               </div>
-            </div>
+            </Link>
+
+            {isLoggedIn && String(user.id) !== String(listing.seller.id) && (
+              <button type="button" className="listing-card__report detail-page__report"
+                onClick={() => setReportOpen(true)}>
+                <Flag size={14} /> Report listing
+              </button>
+            )}
 
             <div className="detail-page__availability">
               <ShieldCheck size={16} className="detail-page__avail-icon" />
@@ -197,6 +207,10 @@ export default function ListingDetailPage() {
             </div>
           </div>
         </div>
+      )}
+      {reportOpen && (
+        <ReportDialog targetType="listing" targetId={listing.id} targetLabel={`“${listing.title}”`}
+          onClose={() => setReportOpen(false)} />
       )}
     </div>
   );

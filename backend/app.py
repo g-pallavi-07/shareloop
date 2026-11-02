@@ -33,6 +33,13 @@ SORT_COLUMNS = {
     "price-desc": "l.price DESC, l.created_at DESC",
 }
 EMAIL_PATTERN = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+REPORT_REASONS = {
+    "scam_fraud": "Scam or fraud",
+    "misleading_information": "Misleading information",
+    "inappropriate_content": "Inappropriate content",
+    "suspicious_behavior": "Suspicious behavior",
+    "other": "Other",
+}
 
 
 def create_app(test_config=None):
@@ -247,6 +254,36 @@ def create_app(test_config=None):
             )
         get_db().commit()
         return jsonify({"user": user_payload(get_user(g.user["user_id"]))})
+
+    @app.get("/api/users/<int:user_id>")
+    def public_user(user_id):
+        with get_db().cursor() as cursor:
+            cursor.execute(
+                "SELECT user_id,full_name,department,college_year,profile_image_url,created_at "
+                "FROM Users WHERE user_id=%s AND account_status='active'",
+                (user_id,),
+            )
+            user = cursor.fetchone()
+            if not user:
+                return error("User not found.", 404)
+            cursor.execute(
+                "SELECT AVG(rating) AS average_rating,COUNT(*) AS review_count "
+                "FROM Reviews WHERE reviewee_id=%s",
+                (user_id,),
+            )
+            summary = cursor.fetchone()
+        return jsonify({
+            "user": {
+                "id": user["user_id"],
+                "name": user["full_name"],
+                "department": user["department"],
+                "year": user["college_year"],
+                "avatar": user["profile_image_url"],
+                "joinedAt": user["created_at"].isoformat() if user["created_at"] else None,
+            },
+            "average_rating": float(summary["average_rating"] or 0),
+            "review_count": summary["review_count"],
+        })
 
     @app.post("/api/users/change-password")
     @authenticated
@@ -673,34 +710,53 @@ def create_app(test_config=None):
     @authenticated
     def add_review():
         data = body()
-        try:
-            order_id, rating = int(data.get("order_id")), int(data.get("rating"))
-        except (TypeError, ValueError):
+        order_id, rating = data.get("order_id"), data.get("rating")
+        if (
+            isinstance(order_id, bool)
+            or not isinstance(order_id, int)
+            or isinstance(rating, bool)
+            or not isinstance(rating, int)
+        ):
+            return error("A valid order_id and rating are required.")
+        if order_id < 1:
             return error("A valid order_id and rating are required.")
         if not 1 <= rating <= 5:
             return error("Rating must be between 1 and 5.")
+        comment = clean_text(data.get("comment"), 2000) or None
         try:
-            with get_db().cursor() as cursor:
-                cursor.execute("SELECT buyer_id,seller_id,status FROM Orders WHERE order_id=%s", (order_id,))
+            db = get_db()
+            with db.cursor() as cursor:
+                cursor.execute(
+                    "SELECT buyer_id,seller_id,status FROM Orders WHERE order_id=%s FOR UPDATE",
+                    (order_id,),
+                )
                 order = cursor.fetchone()
                 if not order or order["status"] != "completed" or g.user["user_id"] not in {order["buyer_id"], order["seller_id"]}:
                     return error("Reviews are available only to participants after a completed transaction.", 403)
                 reviewee = order["seller_id"] if g.user["user_id"] == order["buyer_id"] else order["buyer_id"]
                 cursor.execute(
                     "INSERT INTO Reviews (order_id,reviewer_id,reviewee_id,rating,comment) VALUES (%s,%s,%s,%s,%s)",
-                    (order_id, g.user["user_id"], reviewee, rating, clean_text(data.get("comment"), 2000)),
+                    (order_id, g.user["user_id"], reviewee, rating, comment),
                 )
         except IntegrityError:
             get_db().rollback()
             return error("You already reviewed this transaction.", 409)
         get_db().commit()
-        return jsonify({"success": True}), 201
+        return jsonify({"success": True, "reviewee_id": reviewee}), 201
 
     @app.get("/api/users/<int:user_id>/reviews")
     def user_reviews(user_id):
         with get_db().cursor() as cursor:
             cursor.execute(
-                "SELECT r.rating,r.comment,r.created_at,u.full_name AS reviewer_name FROM Reviews r "
+                "SELECT 1 FROM Users WHERE user_id=%s AND account_status='active'",
+                (user_id,),
+            )
+            if not cursor.fetchone():
+                return error("User not found.", 404)
+            cursor.execute(
+                "SELECT r.order_id,r.rating,r.comment,r.created_at,r.reviewer_id,"
+                "u.full_name AS reviewer_name,u.department AS reviewer_department,"
+                "u.college_year AS reviewer_year FROM Reviews r "
                 "JOIN Users u ON u.user_id=r.reviewer_id WHERE r.reviewee_id=%s ORDER BY r.created_at DESC",
                 (user_id,),
             )
@@ -713,19 +769,52 @@ def create_app(test_config=None):
     @authenticated
     def submit_report():
         data = body()
-        listing_id = data.get("listing_id")
-        reported_user_id = data.get("reported_user_id")
-        if bool(listing_id) == bool(reported_user_id):
+        has_listing = "listing_id" in data and data.get("listing_id") is not None
+        has_user = "reported_user_id" in data and data.get("reported_user_id") is not None
+        if has_listing == has_user:
             return error("A report must target exactly one listing or user.")
-        reason = clean_text(data.get("reason"), 120)
-        if not reason:
-            return error("A report reason is required.")
-        with get_db().cursor() as cursor:
+        target_key = "listing_id" if has_listing else "reported_user_id"
+        target_id = data[target_key]
+        if (
+            isinstance(target_id, bool)
+            or not isinstance(target_id, int)
+            or target_id < 1
+        ):
+            return error("The reported listing or user is invalid.")
+        reason = data.get("reason")
+        if not isinstance(reason, str) or reason not in REPORT_REASONS:
+            return error("Select a valid report reason.")
+        details = clean_text(data.get("details"), 2000) or None
+        db = get_db()
+        with db.cursor() as cursor:
+            if has_listing:
+                cursor.execute(
+                    "SELECT seller_id FROM Listings WHERE listing_id=%s AND status!='removed'",
+                    (target_id,),
+                )
+                target = cursor.fetchone()
+                if not target:
+                    return error("Listing not found.", 404)
+                if target["seller_id"] == g.user["user_id"]:
+                    return error("You cannot report your own listing.", 403)
+                listing_id, reported_user_id = target_id, None
+            else:
+                cursor.execute(
+                    "SELECT user_id FROM Users WHERE user_id=%s AND account_status='active'",
+                    (target_id,),
+                )
+                target = cursor.fetchone()
+                if not target:
+                    return error("User not found.", 404)
+                if target_id == g.user["user_id"]:
+                    return error("You cannot report your own profile.", 403)
+                listing_id, reported_user_id = None, target_id
             cursor.execute(
-                "INSERT INTO Reports (reporter_id,listing_id,reported_user_id,reason,details) VALUES (%s,%s,%s,%s,%s)",
-                (g.user["user_id"], listing_id, reported_user_id, reason, clean_text(data.get("details"), 2000)),
+                "INSERT INTO Reports (reporter_id,listing_id,reported_user_id,reason,details) "
+                "VALUES (%s,%s,%s,%s,%s)",
+                (g.user["user_id"], listing_id, reported_user_id, reason, details),
             )
-        get_db().commit()
+        db.commit()
         return jsonify({"success": True}), 201
 
     @app.get("/api/reports")
@@ -734,7 +823,16 @@ def create_app(test_config=None):
         if g.user["role"] != "admin":
             return error("Administrator access is required.", 403)
         with get_db().cursor() as cursor:
-            cursor.execute("SELECT * FROM Reports ORDER BY created_at DESC")
+            cursor.execute(
+                "SELECT r.report_id,r.reporter_id,r.listing_id,r.reported_user_id,r.reason,r.details,"
+                "r.status,r.created_at,r.resolved_at,reporter.full_name AS reporter_name,"
+                "listing.title AS listing_title,listing.status AS listing_status,"
+                "reported.full_name AS reported_user_name,reported.account_status AS reported_user_status "
+                "FROM Reports r JOIN Users reporter ON reporter.user_id=r.reporter_id "
+                "LEFT JOIN Listings listing ON listing.listing_id=r.listing_id "
+                "LEFT JOIN Users reported ON reported.user_id=r.reported_user_id "
+                "ORDER BY r.created_at DESC"
+            )
             rows = cursor.fetchall()
         return jsonify({"reports": rows})
 
@@ -744,14 +842,41 @@ def create_app(test_config=None):
         if g.user["role"] != "admin":
             return error("Administrator access is required.", 403)
         status = body().get("status")
-        if status not in {"open", "reviewing", "resolved", "dismissed"}:
+        if not isinstance(status, str) or status not in {"open", "reviewing", "resolved", "dismissed"}:
             return error("Invalid report status.")
         with get_db().cursor() as cursor:
-            cursor.execute("UPDATE Reports SET status=%s,resolved_at=IF(%s IN ('resolved','dismissed'),CURRENT_TIMESTAMP,NULL) WHERE report_id=%s", (status, status, report_id))
-            if cursor.rowcount == 0:
+            cursor.execute("SELECT report_id FROM Reports WHERE report_id=%s", (report_id,))
+            if not cursor.fetchone():
                 return error("Report not found.", 404)
+            cursor.execute(
+                "UPDATE Reports SET status=%s,resolved_at=IF(%s IN ('resolved','dismissed'),"
+                "CURRENT_TIMESTAMP,NULL) WHERE report_id=%s",
+                (status, status, report_id),
+            )
         get_db().commit()
         return jsonify({"success": True})
+
+    @app.patch("/api/admin/users/<int:user_id>/status")
+    @authenticated
+    def update_user_status(user_id):
+        if g.user["role"] != "admin":
+            return error("Administrator access is required.", 403)
+        if user_id == g.user["user_id"]:
+            return error("You cannot change your own account status.", 400)
+        status = body().get("status")
+        if not isinstance(status, str) or status not in {"active", "suspended"}:
+            return error("Account status must be active or suspended.")
+        with get_db().cursor() as cursor:
+            cursor.execute(
+                "UPDATE Users SET account_status=%s,updated_at=CURRENT_TIMESTAMP WHERE user_id=%s",
+                (status, user_id),
+            )
+            if cursor.rowcount == 0:
+                cursor.execute("SELECT user_id FROM Users WHERE user_id=%s", (user_id,))
+                if not cursor.fetchone():
+                    return error("User not found.", 404)
+        get_db().commit()
+        return jsonify({"success": True, "status": status})
 
     @app.get("/api/notifications")
     @authenticated
@@ -1065,6 +1190,8 @@ def order_select():
         "o.expected_return_date,o.actual_return_date,o.buyer_note,o.completed_at,"
         "o.buyer_handover_confirmed_at,o.seller_handover_confirmed_at,"
         "o.buyer_payment_confirmed_at,o.seller_payment_confirmed_at,"
+        "EXISTS (SELECT 1 FROM Reviews r WHERE r.order_id=o.order_id AND r.reviewer_id=o.buyer_id) AS buyer_reviewed,"
+        "EXISTS (SELECT 1 FROM Reviews r WHERE r.order_id=o.order_id AND r.reviewer_id=o.seller_id) AS seller_reviewed,"
         "oi.listing_id,oi.quantity,oi.unit_price,l.title AS listing_title,l.listing_type,"
         "buyer.full_name AS buyer_name,buyer.department AS buyer_department,"
         "seller.full_name AS seller_name "
@@ -1093,6 +1220,8 @@ def order_payload(row):
         "sellerHandoverConfirmed": row["seller_handover_confirmed_at"] is not None,
         "buyerPaymentConfirmed": not payment_required or row["buyer_payment_confirmed_at"] is not None,
         "sellerPaymentConfirmed": not payment_required or row["seller_payment_confirmed_at"] is not None,
+        "buyerReviewed": bool(row["buyer_reviewed"]),
+        "sellerReviewed": bool(row["seller_reviewed"]),
         "paymentRequired": payment_required,
         "message": row["buyer_note"] or "",
         "createdAt": row["order_date"].isoformat() if row["order_date"] else None,
