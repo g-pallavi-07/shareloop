@@ -189,6 +189,7 @@ export async function login({ email, password }) {
   return { user };
 }
 
+
 export async function register(data) {
   const { user } = await request('/auth/register', {
     method: 'POST',
@@ -198,6 +199,7 @@ export async function register(data) {
       department: data.department,
       college_year: data.year,
       password: data.password,
+      otp: data.otp,
     }),
   });
   return { user };
