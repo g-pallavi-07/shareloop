@@ -115,7 +115,7 @@ def create_app(test_config=None):
     def health():
         return jsonify({"status": "ok", "database": "not_checked"})
 
-    @app.post("/api/auth/send-otp")
+    @app.route("/api/auth/send-otp", methods=["POST", "OPTIONS"])
     def send_otp():
 
         if request.method == 'OPTIONS':
