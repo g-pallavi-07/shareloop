@@ -74,8 +74,9 @@ def create_app(test_config=None):
         return error(exc.description, exc.code)
 
     def send_otp_email(target_email, otp):
-        smtp_server = "://gmail.com"
-        smtp_port = 587
+        # Read the clean variables straight from your Render Environment panel dashboard
+        smtp_server = os.getenv("MAIL_SERVER", "smtp.gmail.com")
+        smtp_port = int(os.getenv("MAIL_PORT", 587))
         sender_email = os.getenv("MAIL_USERNAME")
         sender_password = os.getenv("MAIL_PASSWORD")
         
