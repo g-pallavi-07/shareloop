@@ -143,21 +143,22 @@ def create_app(test_config=None):
         db = get_db()
         try:
             with db.cursor() as cursor:
+                # 💡 Using standard VALUES() function makes this completely bulletproof across all versions
                 cursor.execute(
                     "INSERT INTO EmailOTPs (email, otp_code, expires_at) VALUES (%s, %s, %s) "
-                    "AS new_otp ON DUPLICATE KEY UPDATE otp_code = new_otp.otp_code, expires_at = new_otp.expires_at",
+                    "ON DUPLICATE KEY UPDATE otp_code = VALUES(otp_code), expires_at = VALUES(expires_at)",
                     (email, otp, expires_at)
                 )
             db.commit()
             
-            # 💡 Spin up background processing thread worker to release request lock instantly
+            # Spin up background thread worker to bypass Gunicorn timeouts
             threading.Thread(
                 target=send_otp_email_worker, 
                 args=(email, otp, app._get_current_object())
             ).start()
             
             return jsonify({"success": True, "message": "Verification token processing initiated."}), 200
-            
+    
         except Exception as e:
             db.rollback()
             app.logger.error(f"OTP Generation DB Error: {e}")
