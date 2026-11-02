@@ -60,9 +60,16 @@ def create_app(test_config=None):
         app.config.update(test_config)
     CORS(
         app,
-        origins=[os.getenv("FRONTEND_ORIGIN", "http://localhost:5173")],
+        origins=[
+            "http://localhost:5173",
+            "https://share-loop.netlify.app"  
+        ],
         supports_credentials=True,
+        allow_headers=["Content-Type", "Authorization", "Cookie"],
+        methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"]
     )
+
+
     app.teardown_appcontext(close_db)
 
     @app.errorhandler(413)
