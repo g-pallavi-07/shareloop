@@ -128,8 +128,8 @@ def create_app(test_config=None):
                 # Save the OTP or overwrite it if they click "Resend"
                 cursor.execute(
                     "INSERT INTO EmailOTPs (email, otp_code, expires_at) VALUES (%s, %s, %s) "
-                    "ON DUPLICATE KEY UPDATE otp_code=%s, expires_at=%s",
-                    (email, otp, expires_at, otp, expires_at)
+                    "AS new_otp ON DUPLICATE KEY UPDATE otp_code = new_otp.otp_code, expires_at = new_otp.expires_at",
+                    (email, otp, expires_at)
                 )
             db.commit()
             
