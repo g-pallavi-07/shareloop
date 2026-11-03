@@ -676,7 +676,10 @@ def create_app(test_config=None):
     @app.patch("/api/orders/<int:order_id>/<action>")
     @authenticated
     def change_order(order_id, action):
-        if action not in {"accept", "reject", "cancel", "complete", "confirm", "return", "return-received"}:
+        if action not in {
+            "accept", "reject", "cancel", "complete",
+            "confirm", "collect", "return", "return-received"
+        }:
             return error("Unknown order action.", 404)
         db = get_db()
         pending_emails = []
@@ -695,7 +698,7 @@ def create_app(test_config=None):
                     return error("Only the seller can respond to this request.", 403)
                 if action in {"cancel"} and order["buyer_id"] != g.user["user_id"]:
                     return error("Only the buyer can cancel this request.", 403)
-                if action in {"complete", "confirm", "return", "return-received"} and g.user["user_id"] not in {order["buyer_id"], order["seller_id"]}:
+                if action in {"complete", "confirm", "collect", "return", "return-received"} and g.user["user_id"] not in {order["buyer_id"], order["seller_id"]}:
                     return error("You are not a participant in this transaction.", 403)
                 if action == "return" and order["buyer_id"] != g.user["user_id"]:
                     return error("Only the borrower can confirm that they returned the item and paid.", 403)
@@ -796,6 +799,34 @@ def create_app(test_config=None):
                             )
                             if email_data:
                                 pending_emails.append(email_data)
+                elif action == "collect":
+                    if order["transaction_type"] != "borrow" or order["status"] != "accepted":
+                        return error("Only accepted borrow transactions can confirm collection.", 409)
+
+                    user_id = g.user["user_id"]
+                    is_buyer = user_id == order["buyer_id"]
+                    side = "buyer" if is_buyer else "seller"
+                    handover_field = f"{side}_handover_confirmed_at"
+
+                    if order[handover_field] is None:
+                        cursor.execute(
+                            f"UPDATE Orders SET {handover_field}=CURRENT_TIMESTAMP WHERE order_id=%s",
+                            (order_id,),
+                        )
+
+                        other_user_id = order["seller_id"] if is_buyer else order["buyer_id"]
+                        role = "borrower" if is_buyer else "seller"
+
+                        email_data = create_notification(
+                            cursor,
+                            other_user_id,
+                            order_id,
+                            "borrow_collection_confirmation",
+                            f"The {role} confirmed collection of the borrowed item. Please confirm your side.",
+                        )
+
+                        if email_data:
+                            pending_emails.append(email_data)
                 elif action == "return":
                     if order["transaction_type"] != "borrow" or order["status"] != "accepted":
                         return error("Only active borrow transactions can be returned.", 409)
@@ -1049,53 +1080,60 @@ def create_app(test_config=None):
         get_db().commit()
         return jsonify({"success": True})
 
-    @app.post("/api/handover")
-    @authenticated
-    def create_handover():
-        data = body()
-        try:
-            order_id = int(data.get("order_id"))
-        except (TypeError, ValueError):
-            return error("A valid order_id is required.")
-        handover_type = data.get("handover_type")
-        if handover_type not in {"collection", "return"}:
-            return error("Handover type must be collection or return.")
-        with get_db().cursor() as cursor:
-            cursor.execute("SELECT buyer_id,seller_id,transaction_type,status FROM Orders WHERE order_id=%s", (order_id,))
-            order = cursor.fetchone()
-            if not order or g.user["user_id"] not in {order["buyer_id"], order["seller_id"]} or order["status"] != "accepted":
-                return error("Only participants in accepted orders can record a handover.", 403)
-            if handover_type == "return" and order["transaction_type"] != "borrow":
-                return error("Return handovers apply only to borrow transactions.")
-            cursor.execute(
-                "INSERT INTO HandoverRecords (order_id,handover_type,confirmed_by,notes) VALUES (%s,%s,%s,%s)",
-                (order_id, handover_type, g.user["user_id"], clean_text(data.get("notes"), 1000)),
-            )
-            handover_id = cursor.lastrowid
-        get_db().commit()
-        return jsonify({"handover_id": handover_id, "confirmation_status": "pending"}), 201
 
     @app.patch("/api/handover/<int:handover_id>/confirm")
     @authenticated
     def confirm_handover(handover_id):
-        with get_db().cursor() as cursor:
-            cursor.execute(
-                "SELECT h.*,o.buyer_id,o.seller_id FROM HandoverRecords h JOIN Orders o ON o.order_id=h.order_id "
-                "WHERE h.handover_id=%s",
-                (handover_id,),
-            )
-            record = cursor.fetchone()
-            if not record or g.user["user_id"] not in {record["buyer_id"], record["seller_id"]}:
-                return error("Handover not found.", 404)
-            if record["confirmed_by"] == g.user["user_id"]:
-                return error("The other transaction participant must confirm this handover.", 403)
-            cursor.execute(
-                "UPDATE HandoverRecords SET confirmation_status='confirmed',confirmed_at=CURRENT_TIMESTAMP WHERE handover_id=%s",
-                (handover_id,),
-            )
-        get_db().commit()
-        return jsonify({"success": True})
+        db = get_db()
 
+        with db.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT h.*, o.buyer_id, o.seller_id
+                FROM HandoverRecords h
+                JOIN Orders o ON o.order_id = h.order_id
+                WHERE h.handover_id = %s
+                """,
+                (handover_id,)
+            )
+
+            record = cursor.fetchone()
+
+            if not record:
+                return error("Handover not found.", 404)
+
+            if g.user["user_id"] not in {
+                record["buyer_id"], record["seller_id"]
+            }:
+                return error("Not authorized.", 403)
+
+            if record["confirmed_by"] == g.user["user_id"]:
+                return error(
+                    "The other transaction participant must confirm this handover.",
+                    403
+                )
+
+            if record["confirmation_status"] == "confirmed":
+                return error("Already confirmed.", 400)
+
+            cursor.execute(
+                """
+                UPDATE HandoverRecords
+                SET confirmation_status = 'confirmed',
+                    confirmed_at = CURRENT_TIMESTAMP
+                WHERE handover_id = %s
+                AND confirmation_status = 'pending'
+                """,
+                (handover_id,)
+            )
+
+            if cursor.rowcount != 1:
+                db.rollback()
+                return error("Unable to confirm handover.", 400)
+
+        db.commit()
+
+        return jsonify({"success": True})
     @app.get("/api/orders/<int:order_id>/handovers")
     @authenticated
     def order_handovers(order_id):

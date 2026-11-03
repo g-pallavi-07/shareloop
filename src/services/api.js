@@ -247,3 +247,36 @@ export async function uploadImage(file) {
   const rootUrl = API_BASE_URL.endsWith('/api') ? API_BASE_URL.slice(0, -4) : API_BASE_URL;
   return `${rootUrl}${url}`;
 }
+
+
+export async function createHandover(orderId, handoverType, notes = '') {
+  return request('/handover', {
+    method: 'POST',
+    body: asJson({
+      order_id: Number(orderId),
+      handover_type: handoverType,
+      notes,
+    }),
+  });
+}
+
+export async function confirmHandover(handoverId) {
+  return request(
+    `/handover/${encodeURIComponent(handoverId)}/confirm`,
+    { method: 'PATCH' }
+  );
+}
+export async function confirmBorrowedItemCollected(requestId) {
+  const { order } = await request(
+    `/orders/${encodeURIComponent(requestId)}/collect`,
+    { method: 'PATCH' }
+  );
+  return order;
+}
+export async function confirmBorrowedItemCollected(requestId) {
+  const { order } = await request(
+    `/orders/${encodeURIComponent(requestId)}/collect`,
+    { method: 'PATCH' }
+  );
+  return order;
+}

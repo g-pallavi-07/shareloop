@@ -14,6 +14,7 @@ import { useAuth, useToast } from '../context/AppContext.jsx';
 import ReviewDialog from '../components/ReviewDialog.jsx';
 import {
   confirmPurchaseCompletion,
+  confirmBorrowedItemCollected,
   confirmBorrowedItemReceived,
   confirmBorrowedItemReturned,
   deleteListing,
@@ -347,6 +348,52 @@ export default function DashboardPage() {
     }
   }
 
+  async function confirmBorrowCollection(orderId) {
+    setUpdatingRequest(orderId);
+
+    try {
+      const updated = await confirmBorrowedItemCollected(orderId);
+
+      setIncoming((requests) =>
+        requests.map((request) =>
+          request.id === updated.id ? updated : request
+        )
+      );
+
+      setOutgoing((requests) =>
+        requests.map((request) =>
+          request.id === updated.id ? updated : request
+        )
+      );
+
+      const viewerIsBorrower =
+        String(user.id) === String(updated.requesterId);
+
+      const ownConfirmation = viewerIsBorrower
+        ? updated.buyerHandoverConfirmed
+        : updated.sellerHandoverConfirmed;
+
+      const bothConfirmed =
+        updated.buyerHandoverConfirmed &&
+        updated.sellerHandoverConfirmed;
+
+      addToast(
+        bothConfirmed
+          ? 'Both parties confirmed collection. The item handover is complete.'
+          : ownConfirmation
+            ? 'Your collection confirmation is saved. Waiting for the other party.'
+            : 'Collection confirmation updated.',
+        'success'
+      );
+    } catch (error) {
+      addToast(
+        error.message || 'Unable to confirm item collection.',
+        'error'
+      );
+    } finally {
+      setUpdatingRequest(null);
+    }
+  }
   // Purchase handover confirmation UI
 
   async function confirmBorrowReturn(orderId) {
@@ -376,7 +423,54 @@ export default function DashboardPage() {
       setUpdatingRequest(null);
     }
   }
+  function renderBorrowCollectionConfirmation(order, viewerIsBorrower) {
+    const ownConfirmation = viewerIsBorrower
+      ? order.buyerHandoverConfirmed
+      : order.sellerHandoverConfirmed;
 
+    const otherConfirmation = viewerIsBorrower
+      ? order.sellerHandoverConfirmed
+      : order.buyerHandoverConfirmed;
+
+    const bothConfirmed = ownConfirmation && otherConfirmation;
+
+    return (
+      <div className="request-confirmation">
+        <p className="request-confirmation__title">
+          Borrowed item collection confirmation
+        </p>
+
+        <p className="request-confirmation__status">
+          You: {ownConfirmation ? 'Confirmed' : 'Not confirmed'}
+          {' · '}
+          {viewerIsBorrower ? 'Seller' : 'Borrower'}:{' '}
+          {otherConfirmation ? 'Confirmed' : 'Waiting'}
+        </p>
+
+        {bothConfirmed ? (
+          <span className="request-confirmation__waiting">
+            Both parties have confirmed collection.
+          </span>
+        ) : ownConfirmation ? (
+          <span className="request-confirmation__waiting">
+            Your confirmation is saved. Waiting for the other party.
+          </span>
+        ) : (
+          <button
+            className="btn btn--dark btn--sm"
+            disabled={updatingRequest === order.id}
+            onClick={() => confirmBorrowCollection(order.id)}
+          >
+            {updatingRequest === order.id
+              ? 'Saving…'
+              : viewerIsBorrower
+                ? 'Confirm item collected'
+                : 'Confirm item handed over'}
+          </button>
+        )}
+      </div>
+    );
+  }
   function renderBorrowReturnConfirmation(order, viewerIsBorrower) {
     const ownConfirmation = viewerIsBorrower
       ? order.borrowerReturnConfirmed
@@ -869,6 +963,14 @@ export default function DashboardPage() {
                       {r.status === 'accepted' &&
                         r.transactionType === 'purchase' &&
                         renderPurchaseConfirmation(r)}
+
+                      {r.status === 'accepted' &&
+                        r.transactionType === 'borrow' && (
+                          <>
+                            {renderBorrowCollectionConfirmation(r, true)}
+                            {renderBorrowReturnConfirmation(r, true)}
+                          </>
+                        )}
                     </div>
 
                     {!(
@@ -929,9 +1031,14 @@ export default function DashboardPage() {
                       {r.status === 'accepted' &&
                         r.transactionType === 'purchase' &&
                         renderPurchaseConfirmation(r)}
+                      
                       {r.status === 'accepted' &&
-                        r.transactionType === 'borrow' &&
-                        renderBorrowReturnConfirmation(r, false)}
+                        r.transactionType === 'borrow' && (
+                          <>
+                            {renderBorrowCollectionConfirmation(r, false)}
+                            {renderBorrowReturnConfirmation(r, false)}
+                          </>
+                        )}
                     </div>
 
                     <div className="request-row__actions">
@@ -1005,7 +1112,12 @@ export default function DashboardPage() {
                                 ? `Overdue · return by: ${order.expectedReturnDate}`
                                 : `Return by: ${order.expectedReturnDate}`}
                         </span>
-                        {order.status === 'accepted' && renderBorrowReturnConfirmation(order, true)}
+                        {order.status === 'accepted' && (
+                          <>
+                            {renderBorrowCollectionConfirmation(order, true)}
+                            {renderBorrowReturnConfirmation(order, true)}
+                          </>
+                        )}
                       </div>
                       <StatusBadge status={order.status} />
                     </div>
@@ -1049,7 +1161,12 @@ export default function DashboardPage() {
                                 ? `Overdue · return by: ${order.expectedReturnDate}`
                                 : `Return by: ${order.expectedReturnDate}`}
                         </span>
-                        {order.status === 'accepted' && renderBorrowReturnConfirmation(order, false)}
+                        {order.status === 'accepted' && (
+                          <>
+                            {renderBorrowCollectionConfirmation(order, false)}
+                            {renderBorrowReturnConfirmation(order, false)}
+                          </>
+                        )}
                       </div>
                       <StatusBadge status={order.status} />
                     </div>
