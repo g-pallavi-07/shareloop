@@ -14,6 +14,8 @@ import { useAuth, useToast } from '../context/AppContext.jsx';
 import ReviewDialog from '../components/ReviewDialog.jsx';
 import {
   confirmPurchaseCompletion,
+  confirmBorrowedItemReceived,
+  confirmBorrowedItemReturned,
   deleteListing,
   getUserListings,
   getMyRequests,
@@ -26,12 +28,24 @@ const TABS = [
   'My Listings',
   'Requests Sent',
   'Requests Received',
-  'Received',
+  'Borrowed',
+  'Lent',
+  'Bought',
   'Sold',
 ];
 
-function isCompleted(order) {
-  return order.status === 'completed';
+function isCompletedPurchase(order) {
+  return order.status === 'completed' && order.transactionType === 'purchase';
+}
+
+function getBorrowDueStatus(order) {
+  if (order.borrowerReturnConfirmed || order.status === 'completed') {
+    return 'returned';
+  }
+  const dueDate = new Date(`${order.expectedReturnDate}T00:00:00`);
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return dueDate < today ? 'overdue' : 'upcoming';
 }
 
 function seenDealsStorageKey(userId) {
@@ -209,10 +223,21 @@ export default function DashboardPage() {
       ? seenDeals.ids
       : new Set();
 
-  const receivedDeals = outgoing.filter(isCompleted);
-  const soldDeals = incoming.filter(isCompleted);
+  const receivedDeals = outgoing.filter(isCompletedPurchase);
+  const soldDeals = incoming.filter(isCompletedPurchase);
+  const borrowedOrders = outgoing.filter(
+    (order) => order.transactionType === 'borrow' &&
+      ['accepted', 'completed'].includes(order.status)
+  );
+  const lentOrders = incoming.filter(
+    (order) => order.transactionType === 'borrow' &&
+      ['accepted', 'completed'].includes(order.status)
+  );
+  const pendingIncomingCount = incoming.filter(
+    (request) => request.status === 'pending'
+  ).length;
 
-  const unreadReceivedCount = receivedDeals.filter(
+  const unreadBoughtCount = receivedDeals.filter(
     (order) => !seenDealIds.has(String(order.id))
   ).length;
 
@@ -222,7 +247,7 @@ export default function DashboardPage() {
 
   if (!isLoggedIn) return null;
 
-  // Mark Received/Sold deals as seen
+  // Mark Bought/Sold deals as seen
   function openDealsTab(section) {
     const ids =
       seenDeals.userId === userId
@@ -230,7 +255,7 @@ export default function DashboardPage() {
         : readSeenDealIds(userId);
 
     const orders =
-      section === 'Received' ? receivedDeals : soldDeals;
+      section === 'Bought' ? receivedDeals : soldDeals;
 
     const nextIds = new Set(ids);
 
@@ -325,18 +350,78 @@ export default function DashboardPage() {
   // Purchase handover confirmation UI
 
   async function confirmBorrowReturn(orderId) {
-    if (!window.confirm('Confirm that this borrowed item has been returned?')) return;
     setUpdatingRequest(orderId);
     try {
-      const updated = await updateRequestStatus(orderId, 'returned');
+      const updated = await confirmBorrowedItemReturned(orderId);
       setIncoming((requests) => requests.map((request) => request.id === updated.id ? updated : request));
       setOutgoing((requests) => requests.map((request) => request.id === updated.id ? updated : request));
-      addToast('The borrowed item has been marked returned.', 'success');
+      addToast('Return and any agreed payment confirmed. Waiting for the seller.', 'success');
     } catch (error) {
       addToast(error.message || 'Unable to confirm this return.', 'error');
     } finally {
       setUpdatingRequest(null);
     }
+  }
+
+  async function confirmBorrowReturnReceived(orderId) {
+    setUpdatingRequest(orderId);
+    try {
+      const updated = await confirmBorrowedItemReceived(orderId);
+      setIncoming((requests) => requests.map((request) => request.id === updated.id ? updated : request));
+      setOutgoing((requests) => requests.map((request) => request.id === updated.id ? updated : request));
+      addToast('Returned item and any agreed payment confirmed. Borrow is complete.', 'success');
+    } catch (error) {
+      addToast(error.message || 'Unable to confirm receipt of this return.', 'error');
+    } finally {
+      setUpdatingRequest(null);
+    }
+  }
+
+  function renderBorrowReturnConfirmation(order, viewerIsBorrower) {
+    const ownConfirmation = viewerIsBorrower
+      ? order.borrowerReturnConfirmed
+      : order.sellerReturnPaymentConfirmed;
+    const otherConfirmation = viewerIsBorrower
+      ? order.sellerReturnPaymentConfirmed
+      : order.borrowerReturnConfirmed;
+
+    return (
+      <div className="request-confirmation">
+        <p className="request-confirmation__title">
+          Return and any agreed payment confirmation
+        </p>
+        <p className="request-confirmation__status">
+          You: {ownConfirmation ? 'Confirmed' : 'Not confirmed'}
+          {' · '}
+          {viewerIsBorrower ? 'Seller' : 'Borrower'}: {otherConfirmation ? 'Confirmed' : 'Waiting'}
+        </p>
+        {ownConfirmation ? (
+          <span className="request-confirmation__waiting">
+            Waiting for the other party to confirm.
+          </span>
+        ) : viewerIsBorrower ? (
+          <button
+            className="btn btn--dark btn--sm"
+            disabled={updatingRequest === order.id}
+            onClick={() => confirmBorrowReturn(order.id)}
+          >
+            {updatingRequest === order.id ? 'Saving…' : 'Confirm returned & payment made'}
+          </button>
+        ) : otherConfirmation ? (
+          <button
+            className="btn btn--dark btn--sm"
+            disabled={updatingRequest === order.id}
+            onClick={() => confirmBorrowReturnReceived(order.id)}
+          >
+            {updatingRequest === order.id ? 'Saving…' : 'Confirm item received & payment received'}
+          </button>
+        ) : (
+          <span className="request-confirmation__waiting">
+            Waiting for the borrower to confirm the return.
+          </span>
+        )}
+      </div>
+    );
   }
 
   function markReviewed() {
@@ -533,23 +618,23 @@ export default function DashboardPage() {
                   : ''
               }`}
               onClick={() =>
-                t === 'Received' || t === 'Sold'
+                t === 'Bought' || t === 'Sold'
                   ? openDealsTab(t)
                   : setTab(t)
               }
             >
               {t}
               {t === 'Requests Received' &&
-                incoming.length > 0 && (
+                pendingIncomingCount > 0 && (
                   <span className="dashboard-tabs__badge">
-                    {incoming.length}
+                    {pendingIncomingCount}
                   </span>
                 )}
 
-              {t === 'Received' &&
-                unreadReceivedCount > 0 && (
+              {t === 'Bought' &&
+                unreadBoughtCount > 0 && (
                   <span className="dashboard-tabs__badge">
-                    {unreadReceivedCount}
+                    {unreadBoughtCount}
                   </span>
                 )}
 
@@ -571,7 +656,7 @@ export default function DashboardPage() {
                   {listings.length}
                 </span>
                 <span className="stat-card__label">
-                  Active Listings
+                  Total Listings
                 </span>
               </div>
 
@@ -844,12 +929,9 @@ export default function DashboardPage() {
                       {r.status === 'accepted' &&
                         r.transactionType === 'purchase' &&
                         renderPurchaseConfirmation(r)}
-                      {r.status === 'accepted' && r.transactionType === 'borrow' && (
-                        <button className="btn btn--dark btn--sm" disabled={updatingRequest === r.id}
-                          onClick={() => confirmBorrowReturn(r.id)}>
-                          {updatingRequest === r.id ? 'Saving…' : 'Confirm item returned'}
-                        </button>
-                      )}
+                      {r.status === 'accepted' &&
+                        r.transactionType === 'borrow' &&
+                        renderBorrowReturnConfirmation(r, false)}
                     </div>
 
                     <div className="request-row__actions">
@@ -887,8 +969,99 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* Received Purchases */}
-        {tab === 'Received' && (
+        {/* Borrowed items */}
+        {tab === 'Borrowed' && (
+          <div className="dashboard-section">
+            {borrowedOrders.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-state__icon">📦</div>
+                <h3 className="empty-state__heading">No borrowed items</h3>
+                <p className="empty-state__body">
+                  Accepted borrow requests will appear here until the return is confirmed by both parties.
+                </p>
+                <button className="btn btn--dark" onClick={() => navigate('/marketplace')}>
+                  Browse Marketplace
+                </button>
+              </div>
+            ) : (
+              <div className="dashboard-requests">
+                {borrowedOrders.map((order) => {
+                  const dueStatus = getBorrowDueStatus(order);
+                  return (
+                    <div key={order.id} className="request-row">
+                      <div className="request-row__info">
+                        <Link to={`/listing/${order.listingId}`} className="request-row__title">
+                          {order.listingTitle}
+                        </Link>
+                        <span className="request-row__meta">
+                          Borrowed from <Link to={`/users/${order.sellerId}`}>{order.sellerName}</Link>
+                        </span>
+                        <span className={`request-row__return request-row__return--${dueStatus}`}>
+                          {order.status === 'completed'
+                            ? `Returned on: ${order.actualReturnDate}`
+                            : dueStatus === 'returned'
+                              ? `Return reported · due date: ${order.expectedReturnDate}`
+                              : dueStatus === 'overdue'
+                                ? `Overdue · return by: ${order.expectedReturnDate}`
+                                : `Return by: ${order.expectedReturnDate}`}
+                        </span>
+                        {order.status === 'accepted' && renderBorrowReturnConfirmation(order, true)}
+                      </div>
+                      <StatusBadge status={order.status} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Lent items */}
+        {tab === 'Lent' && (
+          <div className="dashboard-section">
+            {lentOrders.length === 0 ? (
+              <div className="empty-state">
+                <div className="empty-state__icon">🤝</div>
+                <h3 className="empty-state__heading">No lent items</h3>
+                <p className="empty-state__body">
+                  Items you lend will appear here until the borrower and you confirm the return.
+                </p>
+              </div>
+            ) : (
+              <div className="dashboard-requests">
+                {lentOrders.map((order) => {
+                  const dueStatus = getBorrowDueStatus(order);
+                  return (
+                    <div key={order.id} className="request-row">
+                      <div className="request-row__info">
+                        <Link to={`/listing/${order.listingId}`} className="request-row__title">
+                          {order.listingTitle}
+                        </Link>
+                        <span className="request-row__meta">
+                          Lent to <Link to={`/users/${order.requesterId}`}>{order.requesterName}</Link>
+                        </span>
+                        <span className={`request-row__return request-row__return--${dueStatus}`}>
+                          {order.status === 'completed'
+                            ? `Returned on: ${order.actualReturnDate}`
+                            : dueStatus === 'returned'
+                              ? `Return reported · due date: ${order.expectedReturnDate}`
+                              : dueStatus === 'overdue'
+                                ? `Overdue · return by: ${order.expectedReturnDate}`
+                                : `Return by: ${order.expectedReturnDate}`}
+                        </span>
+                        {order.status === 'accepted' && renderBorrowReturnConfirmation(order, false)}
+                      </div>
+                      <StatusBadge status={order.status} />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Bought purchases */}
+        {tab === 'Bought' && (
           <div className="dashboard-section">
             {renderCompletedDeals(
               receivedDeals,

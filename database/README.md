@@ -3,7 +3,7 @@
 Run these scripts in order using MySQL Workbench or the MySQL command-line client:
 
 1. `schema.sql` creates `shareloop_db` and its InnoDB tables.
-   For an existing installation, run `migrations/001_purchase_confirmations.sql` once to add purchase confirmation fields.
+   For an existing installation, run each applicable migration in `migrations/` once, in numerical order.
 2. `sample_data.sql` inserts fictional demo users, listings, and related records.
 3. `views.sql` creates the listing and seller-rating summary views.
 4. `queries.sql` contains DBMS demonstration queries.
