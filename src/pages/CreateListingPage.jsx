@@ -115,7 +115,7 @@ export default function CreateListingPage() {
                   className={`type-toggle__btn ${form.type === t ? 'type-toggle__btn--active' : ''}`}
                   onClick={() => setForm((v) => ({ ...v, type: t }))}
                 >
-                  {t === 'sale' ? '🏷️ For Sale' : t === 'borrow' ? '🔄 Lend / Borrow' : '🎁 Give Away Free'}
+                  {t === 'sale' ? '🏷️ For Sale' : t === 'borrow' ? '🔄 Lend' : '🎁 Give Away Free'}
                 </button>
               ))}
             </div>
