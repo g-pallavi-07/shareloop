@@ -123,7 +123,10 @@ export default function ListingDetailPage() {
                 <span className="detail-page__price">₹{listing.price?.toLocaleString('en-IN')}</span>
               )}
               {listing.type === 'borrow' && (
-                <span className="detail-page__price">Borrow · {listing.borrowDuration ?? 'Flexible'}</span>
+                <span className="detail-page__price">
+                  {listing.price == null ? '' : `₹${listing.price.toLocaleString('en-IN')} · `}
+                  Borrow · {listing.borrowDuration ?? 'Flexible'}
+                </span>
               )}
               {listing.type === 'free' && (
                 <span className="detail-page__price detail-page__price--free">Free</span>

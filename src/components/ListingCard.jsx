@@ -7,7 +7,10 @@ import ReportDialog from './ReportDialog.jsx';
 
 function formatPrice(listing) {
   if (listing.type === 'free') return 'Free';
-  if (listing.type === 'borrow') return `Borrow · ${listing.borrowDuration ?? 'Flexible'}`;
+  if (listing.type === 'borrow') {
+    const price = listing.price == null ? '' : `₹${listing.price.toLocaleString('en-IN')} · `;
+    return `${price}Borrow · ${listing.borrowDuration ?? 'Flexible'}`;
+  }
   return `₹${listing.price?.toLocaleString('en-IN')}`;
 }
 

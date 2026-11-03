@@ -1274,14 +1274,24 @@ def validate_listing(data, partial=False, current=None):
     except (TypeError, ValueError):
         return None, "Quantity must be a positive integer."
     price = source.get("price")
-    if listing_type == "sale":
+    allow_legacy_borrow_price = (
+        partial
+        and listing_type == "borrow"
+        and current
+        and current.get("listing_type") == "borrow"
+        and price is None
+        and "price" not in data
+        and "type" not in data
+        and "listing_type" not in data
+    )
+    if listing_type in {"sale", "borrow"} and not allow_legacy_borrow_price:
         try:
             price = float(price)
             if price < 0:
                 raise ValueError
         except (TypeError, ValueError):
-            return None, "Sale listings require a non-negative price."
-    else:
+            return None, "Sale and lend listings require a non-negative price."
+    elif listing_type == "free":
         price = None
     borrow_duration = clean_text(source.get("borrowDuration") or source.get("borrow_duration"), 80) or None
     if listing_type == "borrow" and not borrow_duration:

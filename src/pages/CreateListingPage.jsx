@@ -44,7 +44,7 @@ export default function CreateListingPage() {
     if (!form.title.trim()) e.title = 'Title is required.';
     if (!form.category) e.category = 'Select a category.';
     if (!form.condition) e.condition = 'Select the condition.';
-    if (form.type === 'sale' && !form.price) e.price = 'Enter the price.';
+    if (form.type !== 'free' && !form.price) e.price = 'Enter the price.';
     if (form.type === 'borrow' && !form.borrowDuration) e.borrowDuration = 'Specify borrow duration.';
     if (!form.description.trim()) e.description = 'Add a description.';
     return e;
@@ -63,7 +63,7 @@ export default function CreateListingPage() {
       const newListing = await createListing({
         ...form,
         categoryLabel, condition, conditionLabel,
-        price: form.type === 'sale' ? Number(form.price) : null,
+        price: form.type !== 'free' ? Number(form.price) : null,
         borrowDuration: form.type === 'borrow' ? form.borrowDuration : undefined,
         images,
       });
@@ -153,10 +153,10 @@ export default function CreateListingPage() {
             </div>
 
             {/* Conditional fields */}
-            {form.type === 'sale' && (
+            {form.type !== 'free' && (
               <div className="form-group">
-                <label className="form-label" htmlFor="price">Price (₹) *</label>
-                <input id="price" type="number" min="0" className={`form-input ${errors.price ? 'form-input--error' : ''}`}
+                <label className="form-label" htmlFor="price">{form.type === 'borrow' ? 'Lend Price (₹) *' : 'Price (₹) *'}</label>
+                <input id="price" type="number" min="0" step="0.01" className={`form-input ${errors.price ? 'form-input--error' : ''}`}
                   placeholder="e.g. 500" value={form.price} onChange={set('price')} />
                 {errors.price && <span className="form-error">{errors.price}</span>}
               </div>

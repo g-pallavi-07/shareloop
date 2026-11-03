@@ -58,7 +58,8 @@ CREATE TABLE IF NOT EXISTS Listings (
   CONSTRAINT fk_listings_category FOREIGN KEY (category_id) REFERENCES Categories(category_id),
   CONSTRAINT chk_listings_price CHECK (
     (listing_type='sale' AND price IS NOT NULL AND price >= 0) OR
-    (listing_type IN ('borrow','free') AND price IS NULL)
+    (listing_type='borrow' AND (price IS NULL OR price >= 0)) OR
+    (listing_type='free' AND price IS NULL)
   ),
   CONSTRAINT chk_listings_borrow_duration CHECK (
     (listing_type='borrow' AND borrow_duration IS NOT NULL) OR

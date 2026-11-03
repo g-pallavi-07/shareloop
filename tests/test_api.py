@@ -427,9 +427,16 @@ class ApiTestCase(unittest.TestCase):
         self.assertIsNone(issue)
         self.assertEqual(values["price"], 0)
         self.assertIsNotNone(validate_listing({**valid_sale, "price": -1})[1])
-        borrow = {**valid_sale, "type": "borrow", "price": None}
-        self.assertIsNotNone(validate_listing(borrow)[1])
-        self.assertIsNone(validate_listing({**borrow, "borrowDuration": "2 weeks"})[1])
+        borrow = {**valid_sale, "type": "borrow", "price": 25, "borrowDuration": "2 weeks"}
+        values, issue = validate_listing(borrow)
+        self.assertIsNone(issue)
+        self.assertEqual(values["price"], 25)
+        self.assertIsNotNone(validate_listing({**borrow, "price": None})[1])
+        self.assertIsNotNone(validate_listing({**borrow, "price": -1})[1])
+        legacy_current = {"listing_type": "borrow", "price": None, "borrow_duration": "2 weeks"}
+        values, issue = validate_listing({"status": "unavailable"}, partial=True, current=legacy_current)
+        self.assertIsNone(issue)
+        self.assertIsNone(values["price"])
 
     def test_category_slugs_match_existing_frontend_filters(self):
         self.assertEqual(slug("Sports & Fitness"), "sports")
